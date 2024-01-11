@@ -11,7 +11,7 @@ swap_id=$(echo $swap_line | awk '{print $1}')
 # 如果swap分区被UUID标识
 if [[ $swap_id =~ UUID=(.+) ]]
 then
-    swap_part=$(lsblk -no NAME,UUID | grep ${BASH_REMATCH[1]} | awk '{print \$1}')
+    swap_part=$(lsblk -no NAME,UUID | grep ${BASH_REMATCH[1]} | awk '{print $1}')
     sudo sed -i "/UUID=${BASH_REMATCH[1]}/d" /etc/fstab
 else
     # 否则，swap分区被设备名如/dev/sdaX标识
