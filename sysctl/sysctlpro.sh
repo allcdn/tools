@@ -74,9 +74,6 @@ net.ipv4.tcp_max_tw_buckets=55000
 # 启用选择应答
 # 对于广域网通信应当启用
 net.ipv4.tcp_sack=1
-# 启用转发应答
-# 对于广域网通信应当启用
-net.ipv4.tcp_fack=1
 # TCP SYN 连接超时重传次数
 net.ipv4.tcp_syn_retries=3
 net.ipv4.tcp_synack_retries=3
