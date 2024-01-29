@@ -10,7 +10,7 @@ net.ipv4.tcp_wmem = 4096 16384 536870912
 # TCP 窗口缩放的系数，负值意味着更小的窗口缩放因子
 net.ipv4.tcp_adv_win_scale = -2
 # TCP 盲区折叠数据量的最大字节数限制
-net.ipv4.tcp_collapse_max_bytes = 6291456
+#net.ipv4.tcp_collapse_max_bytes = 6291456
 # TCP 流量控制机制中允许的未发送数据量下限
 net.ipv4.tcp_notsent_lowat = 131072
 # 本地端口的可用范围（最小值到最大值）
