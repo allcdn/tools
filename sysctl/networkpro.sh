@@ -67,8 +67,8 @@ fs.nr_open = 1048576
 net.ipv4.tcp_fastopen = 3
 # 虚拟内存交换操作（0表示避免使用swap，因为已做了大量网络调整）
 vm.swappiness=0
-# 避免发送小的数据包，即启用 Nagle's algorithm
-net.ipv4.tcp_nodelay = 1
+# 避免发送小的数据包，即启用 Nagle's algorithm xanmod内核无需设置
+#net.ipv4.tcp_nodelay = 1
 # 开启反向路径过滤
 net.ipv4.conf.all.rp_filter = 1
 net.ipv4.conf.default.rp_filter = 1
