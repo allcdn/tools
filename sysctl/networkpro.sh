@@ -1,8 +1,8 @@
 cat << 'EOF' > /etc/sysctl.conf
 # 使用 FQ-PIE（公平排队带有比例积分控制器的改进版）队列管理算法来控制缓存、排队延迟和提高网络性能
 net.core.default_qdisc = fq_pie
-# 启用 BBR 拥塞控制算法来优化网络吞吐量和降低延迟
-net.ipv4.tcp_congestion_control = bbr
+# 启用 BBR 拥塞控制算法来优化网络吞吐量和降低延迟xanmod内核默认开启bbr3
+#net.ipv4.tcp_congestion_control = bbr
 # 调整 TCP 接收缓冲区大小的区间（最小值、默认值、最大值）
 net.ipv4.tcp_rmem = 8192 262144 536870912
 # 调整 TCP 发送缓冲区大小的区间（最小值、默认值、最大值）
@@ -22,7 +22,7 @@ net.core.wmem_max = 16777216
 # socket 监听队列的最大长度，适合大量并发连接的场景
 net.core.somaxconn = 65535
 # 网络设备队列的最大数据包数量
-net.core.netdev_max_backlog = 5000
+net.core.netdev_max_backlog = 32768
 # TIME-WAIT 状态下的 socket 最大数量，防止 TIME-WAIT 锁占用资源
 net.ipv4.tcp_max_tw_buckets = 1440000
 # 当 TCP 接收缓冲溢出时是否立即放弃连接
@@ -43,8 +43,6 @@ net.ipv4.tcp_max_syn_backlog = 32768
 net.ipv4.tcp_fin_timeout = 10
 # 重用处于 TIME_WAIT 状态的socket
 net.ipv4.tcp_tw_reuse = 1
-# 开启快速回收 TIME_WAIT 状态的套接字
-net.ipv4.tcp_tw_recycle = 1
 # TCP 保活探测包的发送间隔
 net.ipv4.tcp_keepalive_intvl = 60
 # 发送 TCP 保活探测包之前需要等待的时间
