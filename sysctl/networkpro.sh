@@ -22,7 +22,7 @@ net.core.wmem_max = 536870912
 # socket 监听队列的最大长度，适合大量并发连接的场景
 net.core.somaxconn = 32768
 # 网络设备队列的最大数据包数量
-net.core.netdev_max_backlog = 32768
+net.core.netdev_max_backlog = 5000
 # TIME-WAIT 状态下的 socket 最大数量，防止 TIME-WAIT 锁占用资源
 net.ipv4.tcp_max_tw_buckets = 65536
 # 当 TCP 接收缓冲溢出时是否立即放弃连接
@@ -41,12 +41,16 @@ net.ipv4.tcp_synack_retries = 3
 net.ipv4.tcp_max_syn_backlog = 32768
 # TCP 连接在 FIN-WAIT-2 状态下存活的时间
 net.ipv4.tcp_fin_timeout = 15
+# 重用处于 TIME_WAIT 状态的socket
+net.ipv4.tcp_tw_reuse = 1
+# 开启快速回收 TIME_WAIT 状态的套接字
+net.ipv4.tcp_tw_recycle = 1
 # TCP 保活探测包的发送间隔
-net.ipv4.tcp_keepalive_intvl = 3
+net.ipv4.tcp_keepalive_intvl = 60
 # 发送 TCP 保活探测包之前需要等待的时间
 net.ipv4.tcp_keepalive_time = 600
 # 在第一次和第二次最终数据确认之前可以发送多少个 TCP 保活探测包
-net.ipv4.tcp_keepalive_probes = 5
+net.ipv4.tcp_keepalive_probes = 10
 # 放弃连接之前尝试发送的 TCP 尝试次数
 net.ipv4.tcp_retries1 = 3
 # 放弃回复数据包之前的最大重试次数
@@ -65,6 +69,8 @@ fs.nr_open = 1048576
 net.ipv4.tcp_fastopen = 3
 # 虚拟内存交换操作（0表示避免使用swap，因为已做了大量网络调整）
 vm.swappiness=0
+# 避免发送小的数据包，即启用 Nagle's algorithm
+net.ipv4.tcp_nodelay = 1
 EOF
 
 sysctl -p
