@@ -17,13 +17,14 @@ net.core.wmem_default=16384
 net.core.rmem_default=262144
 net.core.rmem_max=536870912
 net.core.wmem_max=536870912
-#安装xanmod内核则无需设置#
+
+#安装xanmod内核则无需设置
 #net.ipv4.tcp_rmem = 8192 262144 536870912
 #net.ipv4.tcp_wmem = 4096 16384 536870912
 #net.ipv4.tcp_adv_win_scale = -2
 #net.ipv4.tcp_collapse_max_bytes = 6291456
 #net.ipv4.tcp_notsent_lowat = 131072
-#安装xanmod内核则无需设置#
+
 net.core.netdev_max_backlog=10240
 net.ipv4.tcp_max_syn_backlog=10240
 net.core.somaxconn=8192
@@ -173,6 +174,7 @@ kernel.sysrq=1
 # Ref: https://gist.github.com/lixingcong/0e13b4123d29a465e364e230b2e45f60
 # 当某个节点可用内存不足时, 系统会倾向于从其他节点分配内存. 对 Mongo/Redis 类 cache 服务器友好
 vm.zone_reclaim_mode=0
+# 启用 TCP Fast Open，0是禁用，1是开启传入连接，2是开启传出连接，3是同时开启传入和传出
 net.ipv4.tcp_fastopen = 3
 EOF
 
