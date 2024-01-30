@@ -15,14 +15,20 @@ net.ipv4.tcp_adv_win_scale = -2
 net.ipv4.tcp_notsent_lowat = 131072
 # 本地端口的可用范围（最小值到最大值）
 net.ipv4.ip_local_port_range = 1024 65535
-# 允许的 TCP 和 UDP 读缓冲区最大值
-net.core.rmem_max = 16777216
-# 允许的 TCP 和 UDP 写缓冲区最大值
-net.core.wmem_max = 16777216
+# 增加接收缓存的最小值、默认值和最大值（bytes）
+net.ipv4.udp_rmem_min = 8192
+net.core.rmem_default = 16000000
+net.core.rmem_max = 33554432
+# 增加发送缓存的最小值、默认值和最大值（bytes）
+net.ipv4.udp_wmem_min = 8192
+net.core.wmem_default = 16000000
+net.core.wmem_max = 33554432
+# 调整 UDP 传输层的内存使用设置（bytes）
+net.ipv4.udp_mem = 8192 1048576 16777216
 # socket 监听队列的最大长度，适合大量并发连接的场景
 net.core.somaxconn = 65535
 # 网络设备队列的最大数据包数量
-net.core.netdev_max_backlog = 32768
+net.core.netdev_max_backlog = 50000
 # TIME-WAIT 状态下的 socket 最大数量，防止 TIME-WAIT 锁占用资源
 net.ipv4.tcp_max_tw_buckets = 1440000
 # 当 TCP 接收缓冲溢出时是否立即放弃连接
