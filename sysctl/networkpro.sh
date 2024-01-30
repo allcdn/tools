@@ -15,11 +15,11 @@ net.ipv4.tcp_adv_win_scale = -2
 net.ipv4.tcp_notsent_lowat = 131072
 # 本地端口的可用范围（最小值到最大值）
 net.ipv4.ip_local_port_range = 1024 65535
-# 增加接收缓存的最小值、默认值和最大值（bytes）
+# 增加UDP接收缓存的最小值、默认值和最大值（bytes）
 net.ipv4.udp_rmem_min = 8192
 net.core.rmem_default = 16000000
 net.core.rmem_max = 33554432
-# 增加发送缓存的最小值、默认值和最大值（bytes）
+# 增加UDP发送缓存的最小值、默认值和最大值（bytes）
 net.ipv4.udp_wmem_min = 8192
 net.core.wmem_default = 16000000
 net.core.wmem_max = 33554432
