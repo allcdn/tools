@@ -50,12 +50,12 @@ net.ipv4.tcp_window_scaling=1
 net.ipv4.tcp_slow_start_after_idle=0
 # nf_conntrack 调优 xanmod内核无需设置
 # Add Ref: https://gist.github.com/lixingcong/0e13b4123d29a465e364e230b2e45f60
-#net.nf_conntrack_max=1000000
-#net.netfilter.nf_conntrack_max=1000000
-#net.netfilter.nf_conntrack_tcp_timeout_fin_wait=30
-#net.netfilter.nf_conntrack_tcp_timeout_time_wait=30
-#net.netfilter.nf_conntrack_tcp_timeout_close_wait=15
-#net.netfilter.nf_conntrack_tcp_timeout_established=300
+net.netfilter.nf_conntrack_max=1048576
+net.nf_conntrack_max=1048576
+net.netfilter.nf_conntrack_tcp_timeout_fin_wait=30
+net.netfilter.nf_conntrack_tcp_timeout_time_wait=30
+net.netfilter.nf_conntrack_tcp_timeout_close_wait=15
+net.netfilter.nf_conntrack_tcp_timeout_established=300
 #net.ipv4.netfilter.ip_conntrack_tcp_timeout_established=7200
 # TIME-WAIT 状态调优
 # Ref: http://vincent.bernat.im/en/blog/2014-tcp-time-wait-state-linux.html
