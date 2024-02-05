@@ -13,10 +13,10 @@ net.ipv4.tcp_timestamps=1
 # Ref: https://zhuanlan.zhihu.com/p/149372947
 # 有条件建议依据实测结果调整相关数值
 # 缓冲区相关配置均和内存相关
-net.core.wmem_default=16384
-net.core.rmem_default=262144
-net.core.rmem_max=536870912
-net.core.wmem_max=536870912
+net.core.rmem_max = 26214400
+net.core.wmem_max = 26214400
+net.core.rmem_default = 16384
+net.core.wmem_default = 16384
 
 #安装xanmod内核则无需设置
 #net.ipv4.tcp_rmem = 8192 262144 536870912
