@@ -36,7 +36,7 @@ net.core.default_qdisc=fq_pie
 # Xanmod 内核 6.X 版本目前默认使用 bbr3, 无需设置
 # 实测比 bbr, bbr2 均有提升
 # 不过网络条件不同会影响. 有需求请实测.
-# net.ipv4.tcp_congestion_control=bbr3
+net.ipv4.tcp_congestion_control=bbr
 # 显式拥塞通知
 # 已被发现在高度拥塞的网络上是有害的.
 # net.ipv4.tcp_ecn=1
