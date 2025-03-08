@@ -3,7 +3,13 @@
 # 备份原来的 sysctl.conf
 cp /etc/sysctl.conf /etc/sysctl.conf.bak_$(date +%F_%T)
 
-# 清空 /etc/sysctl.conf 并写入新的优化配置
+# 使用 `truncate` 确保彻底清空 `/etc/sysctl.conf`
+truncate -s 0 /etc/sysctl.conf
+
+# 确保文件为空
+echo "" > /etc/sysctl.conf
+
+# 重新写入优化配置
 cat > /etc/sysctl.conf <<EOF
 # ======================= 文件描述符和 Inotify =======================
 fs.file-max = 1000000
@@ -72,7 +78,10 @@ net.ipv4.tcp_syncookies = 1
 net.ipv4.route.max_size = 32768
 EOF
 
-# 立即应用新配置
-sysctl -p
+# 确保文件已正确写入
+sync
 
-echo "sysctl.conf 已清空并写入优化配置，修改已生效！"
+# 重新加载 `sysctl` 配置
+sysctl --system
+
+echo "sysctl.conf 已彻底清空并写入优化配置，修改已生效！"
