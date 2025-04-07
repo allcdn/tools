@@ -73,7 +73,6 @@ net.ipv6.neigh.default.gc_thresh1 = 2048
 
 # ======================= 防火墙 SYN Flood 防护 =======================
 net.ipv4.tcp_syncookies = 1
-
 EOF
 
 # 确保文件已正确写入
