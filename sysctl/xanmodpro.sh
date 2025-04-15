@@ -134,8 +134,15 @@ EOF
 
 systemctl daemon-reexec
 
-# ulimit 立即生效
-ulimit -n "$nofile_hard"
+# 安全设置 ulimit，避免超过当前 shell 上限
+current_max=$(ulimit -Hn)
+if [ "$nofile_hard" -le "$current_max" ]; then
+  ulimit -n "$nofile_hard"
+else
+  echo -e "${YELLOW}⚠ 当前 shell 会话最大 open files 限制为 $current_max，已跳过设置更高的 ulimit。${NC}"
+  echo -e "${YELLOW}⚠ 请重启系统或重新登录以使更高 limits.conf 生效。${NC}"
+fi
+
 ulimit -c unlimited
 [ -x "$(command -v prlimit)" ] && prlimit --pid $$ --nofile="$nofile_hard":"$nofile_hard"
 
