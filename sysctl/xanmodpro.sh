@@ -1,7 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-echo -e "\033[36m[\u2022] 正在运行智能适配系统优化...\033[0m"
+# ====== 颜色定义 ======
+RED='\033[31m'
+GREEN='\033[32m'
+YELLOW='\033[33m'
+BLUE='\033[34m'
+NC='\033[0m'
+
+echo -e "${BLUE}[•] 正在运行智能适配系统优化...${NC}"
 
 # 获取系统信息
 mem_gb=$(awk '/MemTotal/ {printf "%.0f", $2/1024/1024}' /proc/meminfo)
@@ -23,9 +30,9 @@ rmem_max=$((mem_gb * 1024 * 1024))
 # 备份原始配置
 cp /etc/sysctl.conf /etc/sysctl.conf.bak_$(date +%F_%T)
 
-# 写入优化的 sysctl.conf
+# 写入优化配置
 cat > /etc/sysctl.conf <<EOF
-# 内核: $kernel_version | XanMod: $is_xanmod | 内存: ${mem_gb}GB | CPU: ${cpu_cores}
+# 内核: $kernel_version | XanMod: $is_xanmod | 内存: ${mem_gb}GB | CPU: ${cpu_cores}核
 
 fs.file-max = $((nofile_hard * 2))
 fs.inotify.max_user_instances = 8192
@@ -132,21 +139,17 @@ ulimit -n "$nofile_hard"
 ulimit -c unlimited
 [ -x "$(command -v prlimit)" ] && prlimit --pid $$ --nofile="$nofile_hard":"$nofile_hard"
 
-# 显示结果
-cat <<EOF
-
-\033[1;34m==================== 优化完成报告 ====================\033[0m
-\033[32m✔ 内核版本        :\033[0m $kernel_version
-\033[32m✔ 内存                :\033[0m ${mem_gb} GB
-\033[32m✔ CPU 核心             :\033[0m ${cpu_cores} 核
-\033[32m✔ 文件描述符     :\033[0m soft=$nofile_soft, hard=$nofile_hard
-\033[32m✔ TCP 描述符缓冲  :\033[0m $rmem_max (约 $((rmem_max/1024/1024))MB)
-\033[32m✔ UDP/QUIC 支持       :\033[0m 已启用
-\033[32m✔ gRPC/HTTP2 增强   :\033[0m TCP_FASTOPEN + BBR
-\033[32m✔ 系统限制生效   :\033[0m ulimit + systemd + pam
-\033[32m✔ 立即生效方式   :\033[0m sysctl --system, prlimit, ulimit
-\033[32m✔ 验证命令         :\033[0m ulimit -n ; sysctl -a | grep tcp
-
-\033[1;33m提示: 如需保障 limits.conf 生效, 请重启服务或重新登录会话\033[0m
-\033[1;34m====================================================\033[0m
-EOF
+# 输出最终结果
+echo -e "\n${BLUE}==================== 优化完成报告 ====================${NC}"
+echo -e "${GREEN}✔ 内核版本        :${NC} $kernel_version"
+echo -e "${GREEN}✔ 内存            :${NC} ${mem_gb} GB"
+echo -e "${GREEN}✔ CPU 核心        :${NC} ${cpu_cores} 核"
+echo -e "${GREEN}✔ 文件描述符      :${NC} soft=$nofile_soft, hard=$nofile_hard"
+echo -e "${GREEN}✔ TCP 缓冲上限    :${NC} $rmem_max 字节（约 $((rmem_max/1024/1024))MB）"
+echo -e "${GREEN}✔ UDP/QUIC 支持   :${NC} 已启用"
+echo -e "${GREEN}✔ gRPC/HTTP2 增强 :${NC} TCP_FASTOPEN + BBR"
+echo -e "${GREEN}✔ 系统限制生效    :${NC} ulimit + systemd + pam"
+echo -e "${GREEN}✔ 立即生效方式    :${NC} sysctl --system, prlimit, ulimit"
+echo -e "${GREEN}✔ 验证命令        :${NC} ulimit -n ; sysctl -a | grep tcp"
+echo -e "\n${YELLOW}提示: 如需保障 limits.conf 生效，请重启服务或重新登录会话${NC}"
+echo -e "${BLUE}=====================================================${NC}"
