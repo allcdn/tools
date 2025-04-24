@@ -8,6 +8,11 @@ YELLOW='\033[33m'
 BLUE='\033[34m'
 NC='\033[0m'
 
+# 脚本版本信息
+SCRIPT_VERSION="2.0"
+SCRIPT_HASH=$(md5sum "$0" 2>/dev/null | cut -d ' ' -f 1 || echo "unknown")
+SCRIPT_TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+
 # 有效的流量管理算法列表
 valid_qos=("fq" "fq_codel" "fq_pie" "cake" "pfifo_fast" "sfq" "red" "tbf")
 
@@ -17,11 +22,47 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
+# 检查是否已存在锁文件，防止重复运行
+LOCK_FILE="/var/lock/network_optimize.lock"
+if [ -f "$LOCK_FILE" ]; then
+    # 检查锁文件是否过期(10分钟)
+    LOCK_TIME=$(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0)
+    CURRENT_TIME=$(date +%s)
+    if (( CURRENT_TIME - LOCK_TIME < 600 )); then
+        echo -e "${YELLOW}警告: 另一个优化脚本实例正在运行。${NC}"
+        echo -e "${YELLOW}如果确定没有其他实例在运行，可以删除锁文件: ${LOCK_FILE}${NC}"
+        echo -e "${YELLOW}或等待10分钟后再试。${NC}"
+        exit 1
+    else
+        echo -e "${YELLOW}发现过期的锁文件，继续执行...${NC}"
+    fi
+fi
+
+# 创建锁文件
+echo "$SCRIPT_TIMESTAMP" > "$LOCK_FILE"
+
+# 当脚本结束时清理锁文件和临时文件
+cleanup() {
+    rm -f "$LOCK_FILE" 2>/dev/null || true
+    # 清理其他临时文件
+    rm -f "/tmp/sysctl_temp.conf" 2>/dev/null || true
+    echo -e "\n${BLUE}脚本执行完成，清理临时文件${NC}"
+}
+
+# 设置退出时自动调用cleanup函数
+trap cleanup EXIT
+
 # 获取系统信息
 mem_gb=$(awk '/MemTotal/ {printf "%.0f", $2/1024/1024}' /proc/meminfo)
 cpu_cores=$(nproc)
 is_xanmod=$(uname -r | grep -iq xanmod && echo 1 || echo 0)
 kernel_version=$(uname -r)
+
+# 记录执行历史
+LOG_DIR="/var/log/network_optimize"
+mkdir -p "$LOG_DIR" 2>/dev/null || true
+LOG_FILE="$LOG_DIR/history.log"
+echo "[$SCRIPT_TIMESTAMP] 执行版本:$SCRIPT_VERSION 内核:$kernel_version 内存:${mem_gb}GB CPU:${cpu_cores}核" >> "$LOG_FILE"
 
 # 检查内核是否支持特定参数
 check_kernel_param() {
@@ -37,6 +78,21 @@ check_kernel_param() {
 # 第一步：选择服务器类型
 # ======================================================
 choose_server_type() {
+    # 检查是否已有配置文件
+    CONF_FILE="/etc/network_optimize.conf"
+    if [ -f "$CONF_FILE" ] && [ "$PROMPT_REUSE" = "true" ]; then
+        source "$CONF_FILE"
+        echo -e "${BLUE}===== 加载现有配置 =====${NC}"
+        echo -e "${GREEN}● 服务器类型: $SERVER_TYPE${NC}"
+        echo -e "${GREEN}● 流量管理算法: $QOS_ALGO${NC}"
+        
+        read -p "$(echo -e ${YELLOW}"是否使用现有配置? [Y/n]: "${NC})" reuse_config
+        if [[ -z "$reuse_config" || "$reuse_config" =~ ^[Yy]$ ]]; then
+            echo -e "${GREEN}使用现有配置继续...${NC}"
+            return 0
+        fi
+    fi
+    
     echo -e "${BLUE}===== 第1步：选择服务器类型 =====${NC}"
     echo
     echo -e "1) ${GREEN}Web服务器${NC} - 适合网站、API和应用服务器"
@@ -68,6 +124,26 @@ choose_server_type() {
 # 第二步：选择流量管理算法
 # ======================================================
 choose_qos_algorithm() {
+    # 如果已经从配置文件加载，并且用户选择了重用，跳过选择
+    if [ -f "/etc/network_optimize.conf" ] && [ "$PROMPT_REUSE" = "true" ] && [ -n "${QOS_ALGO:-}" ]; then
+        # 验证算法有效性
+        qos_valid=0
+        for qos in "${valid_qos[@]}"; do
+            if [[ "$QOS_ALGO" == "$qos" ]]; then
+                qos_valid=1
+                break
+            fi
+        done
+        
+        if [[ $qos_valid -eq 1 ]]; then
+            # 如果为cake算法，检查模块
+            if [[ "$QOS_ALGO" == "cake" ]]; then
+                check_cake_module
+            fi
+            return 0
+        fi
+    fi
+    
     echo -e "${BLUE}===== 第2步：选择流量管理算法 =====${NC}"
     echo
     
@@ -112,8 +188,8 @@ choose_qos_algorithm() {
     
     # 选择算法
     local qos_choice=""
-    while [[ ! "$qos_choice" =~ ^[1-8]$ ]]; do
-        read -p "$(echo -e ${YELLOW}"请选择流量管理算法 [1-8] (推荐的默认值: ${default_qos}): "${NC})" qos_choice
+    while [[ ! "$qos_choice" =~ ^[1-8]$ && ! -z "$qos_choice" ]]; do
+        read -p "$(echo -e ${YELLOW}"请选择流量管理算法 [1-8] (回车使用推荐值: ${default_qos}): "${NC})" qos_choice
         
         # 如果用户直接回车，使用默认算法
         if [[ -z "$qos_choice" ]]; then
@@ -144,6 +220,23 @@ choose_qos_algorithm() {
     if [[ "$QOS_ALGO" == "cake" ]]; then
         check_cake_module
     fi
+    
+    # 保存配置到文件，方便下次重用
+    save_config
+}
+
+# 保存配置到文件
+save_config() {
+    cat > "/etc/network_optimize.conf" <<EOF
+# 网络优化配置 - 由脚本自动生成
+# 最后更新: $SCRIPT_TIMESTAMP
+
+SERVER_TYPE="$SERVER_TYPE"
+QOS_ALGO="$QOS_ALGO"
+LAST_OPTIMIZE="$SCRIPT_TIMESTAMP"
+VERSION="$SCRIPT_VERSION"
+EOF
+    echo -e "${GREEN}配置已保存至 /etc/network_optimize.conf${NC}"
 }
 
 # 显示QoS算法详细说明
@@ -223,6 +316,8 @@ check_cake_module() {
                         *) QOS_ALGO="fq" ;;
                     esac
                     echo -e "${YELLOW}已切换到 $QOS_ALGO 作为备选方案${NC}"
+                    # 更新配置文件
+                    save_config
                 }
             }
         else
@@ -291,22 +386,23 @@ apply_optimizations() {
     [ "$wmem_max" -gt 268435456 ] && wmem_max=268435456
     [ "$wmem_max" -lt 16777216 ] && wmem_max=16777216
 
-    # 备份原始配置
-    echo -e "${BLUE}备份原始配置...${NC}"
+    # 备份原始配置 - 限制备份数量，避免堆积
     if [ -f /etc/sysctl.conf ]; then
-        cp /etc/sysctl.conf /etc/sysctl.conf.bak_$(date +%F_%H%M%S)
+        backup_dir="/etc/sysctl.conf.backups"
+        mkdir -p "$backup_dir" 2>/dev/null || true
         
-        # 清除旧的设置
-        sed -i '/# 内核:/d' /etc/sysctl.conf
-        sed -i '/# 流量管理算法:/d' /etc/sysctl.conf
-        sed -i '/# 服务器类型:/d' /etc/sysctl.conf
-        sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
-        sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
-        sed -i '/net.mptcp.enabled/d' /etc/sysctl.conf
-        sed -i '/fs.file-max/d' /etc/sysctl.conf
-        sed -i '/fs.inotify.max_user/d' /etc/sysctl.conf
-        sed -i '/net.core.somaxconn/d' /etc/sysctl.conf
-        sed -i '/net.core.netdev_max_backlog/d' /etc/sysctl.conf
+        # 创建带日期的备份
+        backup_file="$backup_dir/sysctl.conf.$(date +%Y%m%d_%H%M%S)"
+        cp /etc/sysctl.conf "$backup_file"
+        
+        # 保留最近10个备份，删除旧的
+        ls -t "$backup_dir"/sysctl.conf.* 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
+        
+        echo -e "${GREEN}原配置已备份至: $backup_file${NC}"
+        echo -e "${GREEN}保留最近10个备份在: $backup_dir${NC}"
+        
+        # 清除旧的设置 - 更全面的清除
+        sed -i -E '/^(# 内核:|# 流量管理算法:|# 服务器类型:|net\.core\.default_qdisc|net\.ipv4\.tcp_congestion_control|net\.mptcp\.enabled|fs\.file-max|fs\.inotify\.max_user|net\.core\.somaxconn|net\.core\.netdev_max_backlog|net\.ipv4\.tcp_rmem|net\.ipv4\.tcp_wmem|net\.core\.rmem|net\.core\.wmem|net\.ipv4\.udp_|net\.ipv4\.tcp_|net\.core\.optmem_max)/d' /etc/sysctl.conf
     fi
 
     # 创建临时配置文件
@@ -319,6 +415,8 @@ apply_optimizations() {
     cat > "$TMP_SYSCTL" <<EOF
 # 内核: $kernel_version | 内存: ${mem_gb}GB | CPU: ${cpu_cores}核
 # 流量管理算法: $QOS_ALGO | 服务器类型: $SERVER_TYPE
+# 此配置由网络优化脚本生成于: $SCRIPT_TIMESTAMP
+# 脚本版本: $SCRIPT_VERSION
 
 # 文件系统和资源限制
 fs.file-max = $((nofile_hard * 2))
@@ -429,10 +527,15 @@ net.netfilter.nf_conntrack_max = 1048576
 net.netfilter.nf_conntrack_tcp_timeout_established = 7200
 net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
 EOF
-            # 加载VPN相关模块
-            echo -e "${BLUE}加载VPN相关连接跟踪模块...${NC}"
+            # 加载VPN相关模块 - 但只检查是否已加载，避免重复加载
+            echo -e "${BLUE}检查VPN相关连接跟踪模块...${NC}"
             for module in nf_conntrack nf_conntrack_ipv4 nf_nat iptable_nat ip_tables; do
-                modprobe $module 2>/dev/null || echo -e "${YELLOW}模块 $module 加载失败 (可能不影响功能)${NC}"
+                if ! lsmod | grep -q $module; then
+                    echo -e "${YELLOW}加载模块 $module...${NC}"
+                    modprobe $module 2>/dev/null || echo -e "${YELLOW}模块 $module 加载失败 (可能不影响功能)${NC}"
+                else
+                    echo -e "${GREEN}模块 $module 已加载${NC}"
+                fi
             done
             ;;
     esac
@@ -451,34 +554,56 @@ EOF
         echo -e "${YELLOW}系统未启用IPv6支持，跳过IPv6设置${NC}"
     fi
 
-    # 复制到最终配置
-    cp "$TMP_SYSCTL" /etc/sysctl.conf
+    # 将临时配置应用到系统
+    echo -e "${BLUE}应用新的sysctl配置...${NC}"
+    if grep -q "^include /etc/sysctl.d/" /etc/sysctl.conf; then
+        # 如果sysctl.conf已包含include指令，使用sysctl.d目录
+        mkdir -p /etc/sysctl.d
+        cp "$TMP_SYSCTL" /etc/sysctl.d/99-network-optimize.conf
+    else
+        # 否则直接替换sysctl.conf
+        cp "$TMP_SYSCTL" /etc/sysctl.conf
+    fi
+    
+    # 删除临时文件
     rm -f "$TMP_SYSCTL"
 
-    # 应用 sysctl 配置
-    echo -e "${BLUE}应用sysctl配置...${NC}"
+    # 应用配置，忽略可能的错误
     sysctl --system -e || true
 
     # 使用tc命令设置队列管理算法
-    if ! check_kernel_param "net.core.default_qdisc"; then
-        echo -e "${BLUE}使用tc命令设置队列管理算法...${NC}"
-        
-        # 如果tc命令不存在，尝试安装
-        if ! command -v tc &>/dev/null; then
-            echo -e "${YELLOW}未找到tc命令，尝试安装iproute2包...${NC}"
-            apt-get update -qq
-            apt-get install -y iproute2
-        fi
-        
-        # 获取所有网络接口并设置队列
-        interfaces=$(ip -o link show | awk -F': ' '{print $2}' | cut -d@ -f1)
-        for iface in $interfaces; do
-            if [[ "$iface" != "lo" && "$iface" != "" ]]; then
-                echo -e "${BLUE}在接口 $iface 上设置 $QOS_ALGO 队列管理算法${NC}"
-                tc qdisc replace dev $iface root $QOS_ALGO 2>/dev/null || true
-            fi
-        done
+    # 首先检查tc命令是否存在，如果不存在则尝试安装
+    if ! command -v tc &>/dev/null; then
+        echo -e "${YELLOW}未找到tc命令，尝试安装iproute2包...${NC}"
+        apt-get update -qq
+        apt-get install -y iproute2
     fi
+    
+    # 获取已应用的队列规则，避免重复应用相同设置
+    declare -A applied_qos
+    for iface in $(ip -o link show | awk -F': ' '{print $2}' | cut -d@ -f1); do
+        if [[ "$iface" != "lo" && -n "$iface" ]]; then
+            current_qdisc=$(tc qdisc show dev $iface | head -n1 | grep -o "$QOS_ALGO" || echo "")
+            if [[ -n "$current_qdisc" ]]; then
+                applied_qos["$iface"]="1"
+                echo -e "${GREEN}接口 $iface 已应用 $QOS_ALGO 队列管理算法${NC}"
+            else
+                applied_qos["$iface"]="0"
+            fi
+        fi
+    done
+    
+    # 只对未应用的接口设置队列
+    for iface in $(ip -o link show | awk -F': ' '{print $2}' | cut -d@ -f1); do
+        if [[ "$iface" != "lo" && -n "$iface" && "${applied_qos[$iface]}" != "1" ]]; then
+            echo -e "${BLUE}在接口 $iface 上设置 $QOS_ALGO 队列管理算法${NC}"
+            tc qdisc replace dev $iface root $QOS_ALGO 2>/dev/null || {
+                echo -e "${YELLOW}无法在接口 $iface 上设置 $QOS_ALGO，尝试备选方案...${NC}"
+                tc qdisc replace dev $iface root fq_codel 2>/dev/null || 
+                tc qdisc replace dev $iface root fq 2>/dev/null || true
+            }
+        fi
+    done
 
     # 设置系统资源限制
     setup_limits
@@ -494,9 +619,27 @@ EOF
 setup_limits() {
     echo -e "${BLUE}设置系统资源限制...${NC}"
     
-    # 备份原始文件
+    # 检查是否已有相同配置
     if [ -f /etc/security/limits.conf ]; then
-        cp /etc/security/limits.conf /etc/security/limits.conf.bak_$(date +%F_%H%M%S)
+        current_nofile_soft=$(grep "^\* soft nofile" /etc/security/limits.conf | awk '{print $4}')
+        current_nofile_hard=$(grep "^\* hard nofile" /etc/security/limits.conf | awk '{print $4}')
+        
+        if [[ "$current_nofile_soft" == "$nofile_soft" && "$current_nofile_hard" == "$nofile_hard" ]]; then
+            echo -e "${GREEN}文件描述符限制已设置为所需值，跳过修改${NC}"
+            return 0
+        fi
+        
+        # 备份原始文件，限制备份数量
+        backup_dir="/etc/security/limits.conf.backups"
+        mkdir -p "$backup_dir" 2>/dev/null || true
+        
+        backup_file="$backup_dir/limits.conf.$(date +%Y%m%d_%H%M%S)"
+        cp /etc/security/limits.conf "$backup_file"
+        
+        # 保留最近5个备份
+        ls -t "$backup_dir"/limits.conf.* 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
+        
+        echo -e "${GREEN}原limits.conf已备份至: $backup_file${NC}"
         
         # 清除旧的设置
         sed -i '/^* soft nofile/d' /etc/security/limits.conf
@@ -510,7 +653,8 @@ setup_limits() {
     fi
 
     # 写入新设置
-    cat > /etc/security/limits.conf <<EOF
+    cat >> /etc/security/limits.conf <<EOF
+# 由网络优化脚本设置 - $SCRIPT_TIMESTAMP
 * soft nofile $nofile_soft
 * hard nofile $nofile_hard
 * soft nproc $nofile_soft
@@ -523,38 +667,62 @@ EOF
 
     # 确保PAM模块加载limits
     for pam_file in /etc/pam.d/common-session /etc/pam.d/common-session-noninteractive; do
-        if [ -f "$pam_file" ]; then
-            grep -q pam_limits.so "$pam_file" || echo "session required pam_limits.so" >> "$pam_file"
+        if [ -f "$pam_file" ] && ! grep -q "pam_limits.so" "$pam_file"; then
+            echo "session required pam_limits.so" >> "$pam_file"
+            echo -e "${GREEN}在 $pam_file 中添加了 pam_limits.so 模块${NC}"
         fi
     done
 
     # systemd 资源限制
     if [ -d /etc/systemd ]; then
         if [ -f /etc/systemd/system.conf ]; then
-            # 备份原始文件
-            cp /etc/systemd/system.conf /etc/systemd/system.conf.bak_$(date +%F_%H%M%S)
+            # 检查是否已有相同配置
+            current_nofile=$(grep "^DefaultLimitNOFILE=" /etc/systemd/system.conf | cut -d= -f2)
             
-            # 清除旧的设置
-            sed -i '/DefaultLimitCORE\|DefaultLimitNOFILE\|DefaultLimitNPROC/d' /etc/systemd/system.conf
-            
-            # 写入新设置
-            cat >> /etc/systemd/system.conf <<EOF
+            if [[ "$current_nofile" == "$nofile_hard" ]]; then
+                echo -e "${GREEN}systemd资源限制已设置为所需值，跳过修改${NC}"
+            else
+                # 备份原始文件
+                backup_dir="/etc/systemd/backups"
+                mkdir -p "$backup_dir" 2>/dev/null || true
+                
+                backup_file="$backup_dir/system.conf.$(date +%Y%m%d_%H%M%S)"
+                cp /etc/systemd/system.conf "$backup_file"
+                
+                # 保留最近5个备份
+                ls -t "$backup_dir"/system.conf.* 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
+                
+                echo -e "${GREEN}原systemd配置已备份至: $backup_file${NC}"
+                
+                # 清除旧的设置
+                sed -i '/DefaultLimitCORE\|DefaultLimitNOFILE\|DefaultLimitNPROC/d' /etc/systemd/system.conf
+                
+                # 写入新设置
+                cat >> /etc/systemd/system.conf <<EOF
+# 由网络优化脚本设置 - $SCRIPT_TIMESTAMP
 [Manager]
 DefaultLimitCORE=infinity
 DefaultLimitNOFILE=$nofile_hard
 DefaultLimitNPROC=$nofile_hard
 EOF
-            systemctl daemon-reexec
+                echo -e "${GREEN}systemd资源限制已更新${NC}"
+                systemctl daemon-reexec
+            fi
         fi
     fi
 
     # 设置当前会话文件描述符限制
     echo -e "${BLUE}设置当前会话文件描述符限制...${NC}"
     current_max=$(ulimit -Hn)
-    if [ "$nofile_hard" -le "$current_max" ]; then
-        ulimit -n "$nofile_hard" 2>/dev/null || echo -e "${YELLOW}无法设置当前会话文件描述符限制${NC}"
-    else
-        echo -e "${YELLOW}当前shell会话最大限制为${current_max}，已跳过设置更高的ulimit。请重启系统或重新登录生效。${NC}"
+    current_soft=$(ulimit -Sn)
+    
+    if [[ $current_soft -lt $nofile_soft && $nofile_soft -le $current_max ]]; then
+        ulimit -Sn "$nofile_soft" 2>/dev/null && echo -e "${GREEN}当前会话软限制设置为: $nofile_soft${NC}" || 
+        echo -e "${YELLOW}无法设置当前会话软限制${NC}"
+    fi
+    
+    if [[ $current_max -lt $nofile_hard ]]; then
+        echo -e "${YELLOW}当前shell会话硬限制为${current_max}，无法设置更高值。请重启系统或重新登录生效。${NC}"
     fi
 }
 
@@ -564,13 +732,22 @@ create_persistence_service() {
     
     # 创建systemd服务
     if [[ -d /etc/systemd/system ]]; then
-        # 如果已存在则更新
-        if [ -f /etc/systemd/system/apply-sysctl.service ]; then
-            systemctl disable apply-sysctl.service 2>/dev/null || true
-            rm /etc/systemd/system/apply-sysctl.service
+        service_file="/etc/systemd/system/apply-sysctl.service"
+        
+        # 检查是否已存在相同服务
+        if [ -f "$service_file" ]; then
+            existing_qos=$(grep -o "root $QOS_ALGO" "$service_file" || echo "")
+            if [[ -n "$existing_qos" ]]; then
+                echo -e "${GREEN}服务已存在且使用相同的队列管理算法，跳过创建${NC}"
+            else
+                echo -e "${BLUE}更新已存在的服务配置...${NC}"
+                systemctl disable apply-sysctl.service 2>/dev/null || true
+            fi
         fi
         
-        cat > /etc/systemd/system/apply-sysctl.service <<EOF
+        # 如果需要更新或创建新服务
+        if [[ ! -f "$service_file" || -z "$existing_qos" ]]; then
+            cat > "$service_file" <<EOF
 [Unit]
 Description=Apply sysctl settings and network queue management
 After=network.target
@@ -583,20 +760,43 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
-        systemctl daemon-reload
-        systemctl enable apply-sysctl.service
-        systemctl start apply-sysctl.service || true
-        echo -e "${GREEN}✓ 服务 apply-sysctl.service 已创建并启用${NC}"
+            systemctl daemon-reload
+            systemctl enable apply-sysctl.service
+            systemctl restart apply-sysctl.service || true
+            echo -e "${GREEN}✓ 服务 apply-sysctl.service 已创建并启用${NC}"
+        fi
     fi
     
     # 创建rc.local文件作为备份方案
-    if [ ! -f /etc/rc.local ] || ! grep -q "exit 0" /etc/rc.local; then
-        echo -e "${BLUE}创建rc.local作为备份启动脚本...${NC}"
+    if [ ! -f /etc/rc.local ] || ! grep -q "$QOS_ALGO" /etc/rc.local; then
+        echo -e "${BLUE}创建或更新rc.local作为备份启动脚本...${NC}"
+        
+        # 如果文件存在，备份它
+        if [ -f /etc/rc.local ]; then
+            backup_dir="/etc/rc.local.backups"
+            mkdir -p "$backup_dir" 2>/dev/null || true
+            
+            backup_file="$backup_dir/rc.local.$(date +%Y%m%d_%H%M%S)"
+            cp /etc/rc.local "$backup_file"
+            
+            # 保留最近5个备份
+            ls -t "$backup_dir"/rc.local.* 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
+            
+            echo -e "${GREEN}原rc.local已备份至: $backup_file${NC}"
+            
+            # 清除旧的设置
+            sed -i '/tc qdisc replace/d' /etc/rc.local
+            sed -i '/网络优化配置脚本/d' /etc/rc.local
+            sed -i '/应用sysctl设置/d' /etc/rc.local
+            sed -i '/\/sbin\/sysctl --system/d' /etc/rc.local
+        fi
         
         # 创建新的rc.local文件
-        cat > /etc/rc.local <<EOF
+        # 如果文件不存在或者不包含exit 0
+        if [ ! -f /etc/rc.local ] || ! grep -q "exit 0" /etc/rc.local; then
+            cat > /etc/rc.local <<EOF
 #!/bin/bash
-# 网络优化配置脚本 - 自动启动
+# 网络优化配置脚本 - 由脚本自动生成 $SCRIPT_TIMESTAMP
 
 # 应用sysctl设置
 /sbin/sysctl --system
@@ -608,8 +808,13 @@ done
 
 exit 0
 EOF
-        chmod +x /etc/rc.local
-        echo -e "${GREEN}✓ 创建 /etc/rc.local${NC}"
+            chmod +x /etc/rc.local
+            echo -e "${GREEN}✓ 创建 /etc/rc.local${NC}"
+        else
+            # 如果文件存在并且有exit 0，在exit 0前插入命令
+            sed -i '/exit 0/i\# 网络优化配置脚本 - 由脚本自动生成 '"$SCRIPT_TIMESTAMP"'\n\n# 应用sysctl设置\n/sbin/sysctl --system\n\n# 设置队列管理\nfor iface in $(ip -o link show | grep -v "lo" | awk -F": " \x27{print $2}\x27 | cut -d@ -f1); do\n    [[ -n "$iface" ]] && tc qdisc replace dev $iface root '"$QOS_ALGO"' 2>/dev/null || true\ndone\n' /etc/rc.local
+            echo -e "${GREEN}✓ 更新 /etc/rc.local${NC}"
+        fi
         
         # 对于使用systemd的系统，确保rc-local服务启用
         if [ -d /etc/systemd/system ] && ! systemctl is-enabled rc-local.service &>/dev/null; then
@@ -632,13 +837,16 @@ WantedBy=multi-user.target
 EOF
                 systemctl daemon-reload
                 systemctl enable rc-local.service
+                echo -e "${GREEN}✓ rc-local.service 已启用${NC}"
             fi
         fi
+    else
+        echo -e "${GREEN}✓ rc.local已包含正确的队列管理算法设置${NC}"
     fi
 }
 
 # ======================================================
-# 第四步：显示配置总结
+# 第四步：清理和显示配置总结
 # ======================================================
 show_summary() {
     echo -e "${BLUE}===== 配置总结 =====${NC}"
@@ -704,11 +912,21 @@ show_summary() {
     echo -e "${BLUE}===== 优化完成 =====${NC}"
     echo -e "${GREEN}系统网络优化配置已应用并设置为在启动时自动加载${NC}"
     echo -e "${YELLOW}建议重启系统以确保所有优化完全生效${NC}"
+    
+    # 记录执行结果到日志
+    echo "[$SCRIPT_TIMESTAMP] 优化完成: $SERVER_TYPE 服务器, $QOS_ALGO 算法" >> "$LOG_FILE"
 }
 
 # ======================================================
 # 主程序
 # ======================================================
+
+# 检查是否使用已有配置
+PROMPT_REUSE="true"
+# 如果命令行传入--no-prompt参数，则不提示重用
+if [[ "$*" == *"--no-prompt"* ]]; then
+    PROMPT_REUSE="false"
+fi
 
 # 1. 选择服务器类型
 choose_server_type
@@ -722,4 +940,5 @@ apply_optimizations
 # 4. 显示优化总结
 show_summary
 
+# 脚本结束时会自动执行cleanup
 exit 0
