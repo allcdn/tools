@@ -10,21 +10,24 @@ CYAN='\033[36m'
 NC='\033[0m'
 
 # 有效的流量管理算法列表
-valid_qos=("fq" "fq_codel" "fq_pie" "fq_cake" "cake" "pfifo_fast" "sfq" "red" "tbf")
-QOS_ALGO="fq"  # 默认使用fq
+valid_qos=("fq" "fq_codel" "fq_pie" "cake" "pfifo_fast" "sfq" "red" "tbf")
+QOS_ALGO="fq_codel"  # 默认使用fq_codel，更适合服务器环境
 
 # 流量管理算法详细说明
 qos_descriptions=(
     "fq:            公平队列算法，提供基本的公平性和低延迟，适合大多数家庭和小型办公室环境。优点是实现简单，CPU开销低。"
-    "fq_codel:      结合了公平队列和CoDel算法，主动管理缓冲区以减少延迟，适合在线游戏、视频会议等需要低延迟的场景。"
-    "fq_pie:        使用比例积分增强型算法，在高负载下比fq_codel更稳定，适合带宽波动大的场景。"
-    "fq_cake:       CAKE算法的公平队列版本，提供更精细的流量控制和带宽共享，适合复杂网络环境。"
-    "cake:          综合自适应队列管理，具有带宽整形、公平排队和主动队列管理功能，最适合家庭路由器和小型服务器。"
+    "fq_codel:      结合了公平队列和CoDel算法，主动管理缓冲区以减少延迟，适合在线游戏、视频会议、CDN和Web服务器等需要低延迟的场景。"
+    "fq_pie:        使用比例积分增强型算法，在高负载下比fq_codel更稳定，适合带宽波动大的场景，非常适合VPN服务器。"
+    "cake:          综合自适应队列管理，具有带宽整形、公平排队和主动队列管理功能，最适合高负载CDN和流媒体服务器。"
     "pfifo_fast:    Linux的默认队列管理，基于数据包优先级的简单FIFO队列，适合低负载环境。"
     "sfq:           随机公平队列，通过哈希算法分配流量，防止单个连接占用所有带宽，适合低端设备。"
     "red:           随机早期检测，主动丢弃数据包以防止网络拥塞，适合高流量路由器但可能增加CPU负载。"
     "tbf:           令牌桶过滤器，精确控制带宽使用率，适合需要严格带宽限制的场景，如流量计费环境。"
 )
+
+# 服务器类型
+SERVER_TYPE=""
+server_types=("web" "cdn" "vpn")
 
 # 检查是否为root用户
 if [[ $EUID -ne 0 ]]; then
@@ -56,15 +59,17 @@ display_qos_details() {
     echo -e "${BLUE}────────────────────────────────────────────────────────${NC}"
     echo -e "${CYAN}选择合适的算法可以显著提升网络性能和体验${NC}"
     
-    # 根据系统配置提供推荐
-    if [[ $mem_gb -lt 2 ]]; then
-        echo -e "${YELLOW}⚠ 低内存系统推荐: fq, sfq, pfifo_fast${NC}"
+    # 根据服务器类型提供推荐
+    if [[ "$SERVER_TYPE" == "web" ]]; then
+        echo -e "${GREEN}✓ Web服务器推荐: fq_codel, cake${NC}"
+    elif [[ "$SERVER_TYPE" == "cdn" ]]; then
+        echo -e "${GREEN}✓ CDN节点推荐: cake, fq_codel${NC}"
+    elif [[ "$SERVER_TYPE" == "vpn" ]]; then
+        echo -e "${GREEN}✓ VPN服务器推荐: fq_pie, fq_codel${NC}"
     elif [[ $is_xanmod -eq 1 ]]; then
-        echo -e "${GREEN}✓ XanMod内核推荐: fq_cake, cake, fq_codel${NC}"
-    elif [[ $cpu_cores -gt 4 ]]; then
-        echo -e "${GREEN}✓ 多核系统推荐: cake, fq_cake, fq_codel${NC}"
+        echo -e "${GREEN}✓ XanMod内核推荐: cake, fq_codel${NC}"
     else
-        echo -e "${GREEN}✓ 通用系统推荐: fq, fq_codel${NC}"
+        echo -e "${GREEN}✓ 通用服务器推荐: fq_codel, fq${NC}"
     fi
 }
 
@@ -82,12 +87,17 @@ while [[ $# -gt 0 ]]; do
             QOS_ALGO="$2"
             shift 2
             ;;
+        --server-type|-s)
+            SERVER_TYPE="$2"
+            shift 2
+            ;;
         --help|-h)
             echo -e "${GREEN}用法: $0 [选项]${NC}"
             echo -e "${GREEN}选项:${NC}"
-            echo -e "  ${YELLOW}--qos, -q${NC} \t指定流量管理算法(fq, fq_codel, fq_pie, fq_cake等), 默认为fq"
+            echo -e "  ${YELLOW}--qos, -q${NC} \t指定流量管理算法(fq, fq_codel, fq_pie, cake等), 默认为fq_codel"
+            echo -e "  ${YELLOW}--server-type, -s${NC} \t指定服务器类型(web, cdn, vpn)"
             echo -e "  ${YELLOW}--help, -h${NC} \t显示此帮助信息"
-            echo -e "\n如果不指定参数，脚本将以交互方式让您选择流量管理算法"
+            echo -e "\n如果不指定参数，脚本将以交互方式让您选择"
             exit 0
             ;;
         *)
@@ -98,60 +108,85 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# 如果没有通过参数指定服务器类型，提供交互式选择
+if [[ -z "${SERVER_TYPE}" ]]; then
+    echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║             ${GREEN}服务器类型选择${BLUE}                          ║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════════════════════════╝${NC}"
+    echo -e "\n${CYAN}请选择服务器类型:${NC}"
+    echo -e "  ${GREEN}1)${NC} Web服务器\t${YELLOW}适用于网站、API和应用服务器${NC}"
+    echo -e "  ${GREEN}2)${NC} CDN节点\t${YELLOW}适用于内容分发网络${NC}"
+    echo -e "  ${GREEN}3)${NC} VPN服务器\t${YELLOW}适用于VPN和代理服务器${NC}"
+    echo -e "  ${GREEN}4)${NC} 通用服务器\t${YELLOW}适合其他类型服务器${NC}"
+    
+    read -p "$(echo -e ${YELLOW}"请输入选项 [1-4] (默认: 4): "${NC})" server_choice
+    
+    # 设置默认选项
+    server_choice=${server_choice:-4}
+    
+    case $server_choice in
+        1) SERVER_TYPE="web"; QOS_ALGO=${QOS_ALGO:-"fq_codel"} ;;
+        2) SERVER_TYPE="cdn"; QOS_ALGO=${QOS_ALGO:-"cake"} ;;
+        3) SERVER_TYPE="vpn"; QOS_ALGO=${QOS_ALGO:-"fq_pie"} ;;
+        4) SERVER_TYPE="general"; QOS_ALGO=${QOS_ALGO:-"fq_codel"} ;;
+        *) echo -e "${RED}无效选择，使用默认值 'general'${NC}"; SERVER_TYPE="general" ;;
+    esac
+    
+    echo -e "${GREEN}已选择服务器类型: ${CYAN}$SERVER_TYPE${NC}"
+    echo ""
+fi
+
 # 如果没有通过参数指定算法，提供交互式选择
-if [[ -z "${QOS_ALGO:-}" || "$QOS_ALGO" == "fq" ]]; then
+if [[ -z "${QOS_ALGO:-}" ]]; then
     echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"
     echo -e "${BLUE}║             ${GREEN}系统网络流量管理算法优化${BLUE}                  ║${NC}"
     echo -e "${BLUE}╚════════════════════════════════════════════════════════╝${NC}"
     echo -e "\n${CYAN}请选择流量管理算法:${NC}"
-    echo -e "  ${GREEN}1)${NC} fq\t\t${YELLOW}[默认] 基本公平队列，适合大多数场景${NC}"
-    echo -e "  ${GREEN}2)${NC} fq_codel\t${YELLOW}控制延迟的公平队列，减少缓冲膨胀${NC}"
-    echo -e "  ${GREEN}3)${NC} fq_pie\t${YELLOW}比例积分控制器公平队列${NC}"
-    echo -e "  ${GREEN}4)${NC} fq_cake\t${YELLOW}高级功能全面的队列管理算法，推荐服务器使用${NC}"
-    echo -e "  ${GREEN}5)${NC} cake\t\t${YELLOW}综合自动网络队列管理${NC}"
-    echo -e "  ${GREEN}6)${NC} pfifo_fast\t${YELLOW}传统优先级队列${NC}"
-    echo -e "  ${GREEN}7)${NC} sfq\t\t${YELLOW}随机公平队列${NC}"
-    echo -e "  ${GREEN}8)${NC} red\t\t${YELLOW}随机早期检测队列${NC}"
-    echo -e "  ${GREEN}9)${NC} tbf\t\t${YELLOW}令牌桶过滤器${NC}"
-    echo -e "  ${GREEN}10)${NC} 查看详细算法说明"
+    echo -e "  ${GREEN}1)${NC} fq_codel\t${YELLOW}[推荐] 控制延迟的公平队列，适合Web服务器和CDN${NC}"
+    echo -e "  ${GREEN}2)${NC} cake\t\t${YELLOW}综合自动网络队列管理，适合高负载CDN${NC}"
+    echo -e "  ${GREEN}3)${NC} fq_pie\t${YELLOW}比例积分控制器公平队列，适合VPN服务器${NC}"
+    echo -e "  ${GREEN}4)${NC} fq\t\t${YELLOW}基本公平队列，CPU开销低${NC}"
+    echo -e "  ${GREEN}5)${NC} pfifo_fast\t${YELLOW}传统优先级队列${NC}"
+    echo -e "  ${GREEN}6)${NC} sfq\t\t${YELLOW}随机公平队列${NC}"
+    echo -e "  ${GREEN}7)${NC} red\t\t${YELLOW}随机早期检测队列${NC}"
+    echo -e "  ${GREEN}8)${NC} tbf\t\t${YELLOW}令牌桶过滤器${NC}"
+    echo -e "  ${GREEN}9)${NC} 查看详细算法说明"
     echo -e "\n  ${GREEN}0)${NC} 退出脚本"
     
-    read -p "$(echo -e ${YELLOW}"请输入选项 [0-10] (默认: 1): "${NC})" qos_choice
+    read -p "$(echo -e ${YELLOW}"请输入选项 [0-9] (默认: 1): "${NC})" qos_choice
     
     # 设置默认选项
     qos_choice=${qos_choice:-1}
     
     case $qos_choice in
-        1) QOS_ALGO="fq" ;;
-        2) QOS_ALGO="fq_codel" ;;
+        1) QOS_ALGO="fq_codel" ;;
+        2) QOS_ALGO="cake" ;;
         3) QOS_ALGO="fq_pie" ;;
-        4) QOS_ALGO="fq_cake" ;;
-        5) QOS_ALGO="cake" ;;
-        6) QOS_ALGO="pfifo_fast" ;;
-        7) QOS_ALGO="sfq" ;;
-        8) QOS_ALGO="red" ;;
-        9) QOS_ALGO="tbf" ;;
-        10) 
+        4) QOS_ALGO="fq" ;;
+        5) QOS_ALGO="pfifo_fast" ;;
+        6) QOS_ALGO="sfq" ;;
+        7) QOS_ALGO="red" ;;
+        8) QOS_ALGO="tbf" ;;
+        9) 
             display_qos_details
             echo ""
             echo -e "${CYAN}请再次选择流量管理算法:${NC}"
-            read -p "$(echo -e ${YELLOW}"请输入选项 [1-9] (默认: 1): "${NC})" qos_choice
+            read -p "$(echo -e ${YELLOW}"请输入选项 [1-8] (默认: 1): "${NC})" qos_choice
             qos_choice=${qos_choice:-1}
             case $qos_choice in
-                1) QOS_ALGO="fq" ;;
-                2) QOS_ALGO="fq_codel" ;;
+                1) QOS_ALGO="fq_codel" ;;
+                2) QOS_ALGO="cake" ;;
                 3) QOS_ALGO="fq_pie" ;;
-                4) QOS_ALGO="fq_cake" ;;
-                5) QOS_ALGO="cake" ;;
-                6) QOS_ALGO="pfifo_fast" ;;
-                7) QOS_ALGO="sfq" ;;
-                8) QOS_ALGO="red" ;;
-                9) QOS_ALGO="tbf" ;;
-                *) echo -e "${RED}无效选择，使用默认值 'fq'${NC}"; QOS_ALGO="fq" ;;
+                4) QOS_ALGO="fq" ;;
+                5) QOS_ALGO="pfifo_fast" ;;
+                6) QOS_ALGO="sfq" ;;
+                7) QOS_ALGO="red" ;;
+                8) QOS_ALGO="tbf" ;;
+                *) echo -e "${RED}无效选择，使用默认值 'fq_codel'${NC}"; QOS_ALGO="fq_codel" ;;
             esac
             ;;
         0) echo -e "${YELLOW}已取消操作。${NC}"; exit 0 ;;
-        *) echo -e "${RED}无效选择，使用默认值 'fq'${NC}"; QOS_ALGO="fq" ;;
+        *) echo -e "${RED}无效选择，使用默认值 'fq_codel'${NC}"; QOS_ALGO="fq_codel" ;;
     esac
     
     echo -e "${GREEN}已选择: ${CYAN}$QOS_ALGO${NC}"
@@ -173,18 +208,73 @@ if [[ $qos_valid -eq 0 ]]; then
     exit 1
 fi
 
-echo -e "${BLUE}[•] 正在运行智能适配系统优化... (流量管理算法: $QOS_ALGO)${NC}"
+echo -e "${BLUE}[•] 正在运行智能适配系统优化... (服务器类型: $SERVER_TYPE, 流量管理算法: $QOS_ALGO)${NC}"
 
-# 计算资源限制
-nofile_soft=$((mem_gb * 32768))
-nofile_hard=$((mem_gb * 65536))
+# 基于服务器类型计算资源限制
+case $SERVER_TYPE in
+    "web")
+        # 网站服务器通常需要更多的文件描述符和连接数
+        nofile_soft=$((mem_gb * 65536))
+        nofile_hard=$((mem_gb * 131072))
+        somaxconn=65535
+        backlog=$((cpu_cores * 65536))
+        echo -e "${BLUE}[•] 应用Web服务器优化配置...${NC}"
+        ;;
+    "cdn") 
+        # CDN需要极高的并发性能和吞吐量
+        nofile_soft=$((mem_gb * 131072))
+        nofile_hard=$((mem_gb * 262144))
+        somaxconn=131070
+        backlog=$((cpu_cores * 131072))
+        echo -e "${BLUE}[•] 应用CDN节点优化配置...${NC}"
+        ;;
+    "vpn")
+        # VPN关注加密性能和NAT连接
+        nofile_soft=$((mem_gb * 65536))
+        nofile_hard=$((mem_gb * 131072))
+        somaxconn=32768
+        backlog=$((cpu_cores * 32768))
+        echo -e "${BLUE}[•] 应用VPN服务器优化配置...${NC}"
+        ;;
+    *)
+        # 通用服务器
+        nofile_soft=$((mem_gb * 32768))
+        nofile_hard=$((mem_gb * 65536))
+        somaxconn=16384
+        backlog=$((cpu_cores * 16384))
+        echo -e "${BLUE}[•] 应用通用服务器优化配置...${NC}"
+        ;;
+esac
+
+# 限制值边界检查
 [ "$nofile_soft" -lt 262144 ] && nofile_soft=262144
-[ "$nofile_soft" -gt 1048576 ] && nofile_soft=1048576
-[ "$nofile_hard" -gt 2097152 ] && nofile_hard=2097152
+[ "$nofile_soft" -gt 2097152 ] && nofile_soft=2097152
+[ "$nofile_hard" -gt 4194304 ] && nofile_hard=4194304
 
-rmem_max=$((mem_gb * 1024 * 1024))
-[ "$rmem_max" -gt 134217728 ] && rmem_max=134217728
+# 基于服务器类型调整TCP/UDP缓冲区
+case $SERVER_TYPE in
+    "web"|"cdn")
+        # 网站和CDN需要较大的接收缓冲区
+        rmem_max=$((mem_gb * 2 * 1024 * 1024))
+        wmem_max=$((mem_gb * 1024 * 1024))
+        ;;
+    "vpn")
+        # VPN需要平衡的缓冲区
+        rmem_max=$((mem_gb * 1024 * 1024))
+        wmem_max=$((mem_gb * 1024 * 1024))
+        ;;
+    *)
+        # 通用配置
+        rmem_max=$((mem_gb * 1024 * 1024))
+        wmem_max=$((mem_gb * 1024 * 1024))
+        ;;
+esac
+
+# 缓冲区大小边界检查
+[ "$rmem_max" -gt 268435456 ] && rmem_max=268435456
 [ "$rmem_max" -lt 16777216 ] && rmem_max=16777216
+[ "$wmem_max" -gt 268435456 ] && wmem_max=268435456
+[ "$wmem_max" -lt 16777216 ] && wmem_max=16777216
 
 # Debian版本检测
 debian_version=""
@@ -194,7 +284,7 @@ if [ -f /etc/debian_version ]; then
 fi
 
 # 确保内核模块加载
-if [[ "$QOS_ALGO" == "fq_cake" || "$QOS_ALGO" == "cake" ]]; then
+if [[ "$QOS_ALGO" == "cake" ]]; then
     echo -e "${BLUE}[•] 检查 CAKE 队列管理模块...${NC}"
     if ! lsmod | grep -q sch_cake; then
         echo -e "${YELLOW}⚠ 正在加载 CAKE 队列管理模块...${NC}"
@@ -213,8 +303,13 @@ if [[ "$QOS_ALGO" == "fq_cake" || "$QOS_ALGO" == "cake" ]]; then
                 fi
             fi
             modprobe sch_cake 2>/dev/null || {
-                echo -e "${RED}⚠ CAKE 模块安装失败，切换到 fq 作为备选方案${NC}"
-                QOS_ALGO="fq"
+                echo -e "${RED}⚠ CAKE 模块安装失败，根据服务器类型切换为备选方案${NC}"
+                case $SERVER_TYPE in
+                    "web"|"cdn") QOS_ALGO="fq_codel" ;;
+                    "vpn") QOS_ALGO="fq_pie" ;;
+                    *) QOS_ALGO="fq" ;;
+                esac
+                echo -e "${YELLOW}已切换到 $QOS_ALGO 作为备选方案${NC}"
             }
         }
     else
@@ -230,6 +325,7 @@ if [ -f /etc/sysctl.conf ]; then
     # 清除旧的自定义设置，避免重复
     sed -i '/# 内核:/d' /etc/sysctl.conf
     sed -i '/# 流量管理算法:/d' /etc/sysctl.conf
+    sed -i '/# 服务器类型:/d' /etc/sysctl.conf
     sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
     sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
     sed -i '/net.mptcp.enabled/d' /etc/sysctl.conf
@@ -238,6 +334,9 @@ if [ -f /etc/sysctl.conf ]; then
     sed -i '/net.ipv4.tcp_mtu_probing/d' /etc/sysctl.conf
     sed -i '/fs.file-max/d' /etc/sysctl.conf
     sed -i '/fs.inotify.max_user/d' /etc/sysctl.conf
+    sed -i '/net.core.somaxconn/d' /etc/sysctl.conf
+    sed -i '/net.core.netdev_max_backlog/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.tcp_max_syn_backlog/d' /etc/sysctl.conf
 fi
 
 # 写入优化配置
@@ -248,6 +347,7 @@ TMP_SYSCTL="/tmp/sysctl_temp.conf"
 cat > "$TMP_SYSCTL" <<EOF
 # 内核: $kernel_version | XanMod: $is_xanmod | 内存: ${mem_gb}GB | CPU: ${cpu_cores}核
 # 流量管理算法: $QOS_ALGO
+# 服务器类型: $SERVER_TYPE
 
 fs.file-max = $((nofile_hard * 2))
 fs.inotify.max_user_instances = 8192
@@ -299,8 +399,12 @@ else
     fi
 fi
 
-# 检查 MPTCP 支持
-if check_kernel_param "net.mptcp.enabled"; then
+# 检查 MPTCP 支持 (特别适合VPN服务器)
+if [[ "$SERVER_TYPE" == "vpn" ]] && check_kernel_param "net.mptcp.enabled"; then
+    echo "net.mptcp.enabled = 1" >> "$TMP_SYSCTL"
+    echo "net.mptcp.pm_type = 0" >> "$TMP_SYSCTL"
+    echo -e "${GREEN}✓ 启用 MPTCP 多路径传输 (VPN服务器优化)${NC}"
+elif check_kernel_param "net.mptcp.enabled"; then
     echo "net.mptcp.enabled = 1" >> "$TMP_SYSCTL"
     echo -e "${GREEN}✓ 启用 MPTCP 多路径传输${NC}"
 else
@@ -326,18 +430,56 @@ if check_kernel_param "net.ipv4.tcp_base_mss"; then
     echo "net.ipv4.tcp_base_mss = 1024" >> "$TMP_SYSCTL"
 fi
 
+# 设置Web服务器和CDN特定参数
+if [[ "$SERVER_TYPE" == "web" || "$SERVER_TYPE" == "cdn" ]]; then
+    cat >> "$TMP_SYSCTL" <<EOF
+# Web/CDN服务器特定优化
+net.ipv4.tcp_max_syn_backlog = $backlog
+net.ipv4.tcp_max_tw_buckets = 1440000
+net.ipv4.tcp_timestamps = 1
+net.ipv4.tcp_abort_on_overflow = 0
+net.ipv4.ip_local_port_range = 1024 65535
+EOF
+fi
+
+# 设置VPN服务器特定参数
+if [[ "$SERVER_TYPE" == "vpn" ]]; then
+    cat >> "$TMP_SYSCTL" <<EOF
+# VPN服务器特定优化
+net.ipv4.ip_forward = 1
+net.ipv4.conf.all.forwarding = 1
+net.ipv4.conf.default.forwarding = 1
+net.ipv4.tcp_max_tw_buckets = 1000000
+net.ipv4.tcp_max_orphans = 400000
+net.ipv4.tcp_synack_retries = 2
+net.ipv4.tcp_syn_retries = 2
+net.netfilter.nf_conntrack_max = 1048576
+EOF
+
+    # 加载必要的VPN相关模块
+    if ! lsmod | grep -q ip_conntrack; then
+        modprobe ip_conntrack 2>/dev/null || modprobe nf_conntrack 2>/dev/null
+    fi
+    
+    # 检查并创建conntrack相关配置目录
+    if [ -d /proc/sys/net/netfilter ]; then
+        echo "net.netfilter.nf_conntrack_max = 1048576" >> "$TMP_SYSCTL"
+        echo "net.netfilter.nf_conntrack_tcp_timeout_established = 7200" >> "$TMP_SYSCTL"
+        echo "net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30" >> "$TMP_SYSCTL"
+    fi
+fi
+
 cat >> "$TMP_SYSCTL" <<EOF
-net.ipv4.tcp_max_syn_backlog = $((cpu_cores * 65536 < 524288 ? cpu_cores * 65536 : 524288))
-net.core.somaxconn = 65535
-net.core.netdev_max_backlog = $((cpu_cores * 65536 < 524288 ? cpu_cores * 65536 : 524288))
+net.core.somaxconn = $somaxconn
+net.core.netdev_max_backlog = $backlog
 
 net.ipv4.tcp_rmem = 8192 262144 $rmem_max
-net.ipv4.tcp_wmem = 8192 262144 $rmem_max
+net.ipv4.tcp_wmem = 8192 262144 $wmem_max
 net.core.rmem_default = 262144
 net.core.wmem_default = 262144
 net.core.rmem_max = $rmem_max
-net.core.wmem_max = $rmem_max
-net.core.optmem_max = 65536
+net.core.wmem_max = $wmem_max
+net.core.optmem_max = 131072
 
 net.ipv4.udp_mem = $((rmem_max/2)) $rmem_max $((rmem_max*2))
 net.ipv4.udp_rmem_min = 16384
@@ -350,6 +492,7 @@ EOF
 # 检查IPv6支持
 if [ -d /proc/sys/net/ipv6 ]; then
     echo "net.ipv6.conf.all.forwarding = 1" >> "$TMP_SYSCTL"
+    echo "net.ipv6.conf.default.forwarding = 1" >> "$TMP_SYSCTL"
 else
     echo -e "${YELLOW}⚠ 系统未启用 IPv6 支持，跳过 IPv6 设置${NC}"
 fi
@@ -505,7 +648,7 @@ if [[ -d /etc/systemd/system ]]; then
     if [ -f /etc/systemd/system/apply-sysctl.service ]; then
         echo -e "${BLUE}[•] 更新已存在的 apply-sysctl 服务...${NC}"
         systemctl disable apply-sysctl.service 2>/dev/null || true
-		rm /etc/systemd/system/apply-sysctl.service
+        rm /etc/systemd/system/apply-sysctl.service
     fi
     
     cat > /etc/systemd/system/apply-sysctl.service <<EOF
@@ -587,6 +730,108 @@ EOF
     fi
 fi
 
+# 服务器特定的额外优化
+case $SERVER_TYPE in
+    "web")
+        # 为Web服务器应用额外优化
+        echo -e "${BLUE}[•] 应用Web服务器额外优化...${NC}"
+        
+        # 优化文件系统以处理大量小文件（适合Web服务器）
+        if grep -q ext4 /etc/mtab; then
+            echo -e "${BLUE}[•] 检测到ext4文件系统，应用文件系统优化...${NC}"
+            # 我们只提供建议，不直接修改文件系统
+            echo -e "${YELLOW}建议: 对存放Web内容的分区添加noatime挂载选项以提高性能${NC}"
+            echo -e "${YELLOW}       可在/etc/fstab中添加noatime,commit=30选项${NC}"
+        fi
+        
+        # 如果安装了Nginx，应用Nginx优化
+        if command -v nginx &>/dev/null; then
+            echo -e "${BLUE}[•] 检测到Nginx，建议的优化配置:${NC}"
+            echo -e "${YELLOW}推荐Nginx worker_processes设置为: ${cpu_cores}${NC}"
+            echo -e "${YELLOW}推荐Nginx worker_connections设置为: $((nofile_soft / cpu_cores / 2))${NC}"
+            echo -e "${YELLOW}推荐添加:${NC}"
+            echo -e "${YELLOW}  worker_rlimit_nofile $nofile_soft;${NC}"
+            echo -e "${YELLOW}  use epoll;${NC}"
+            echo -e "${YELLOW}  multi_accept on;${NC}"
+        fi
+        ;;
+        
+    "cdn")
+        # 为CDN节点应用额外优化
+        echo -e "${BLUE}[•] 应用CDN节点额外优化...${NC}"
+        
+        # 优化磁盘I/O调度器
+        for disk in $(lsblk -d -o NAME | grep -v NAME); do
+            if [ -f "/sys/block/$disk/queue/scheduler" ]; then
+                echo -e "${BLUE}[•] 设置磁盘 $disk 的I/O调度器为deadline或none...${NC}"
+                
+                # 尝试设置为deadline，如果不可用则尝试none
+                if grep -q "deadline" /sys/block/$disk/queue/scheduler; then
+                    echo deadline > /sys/block/$disk/queue/scheduler
+                    echo -e "${GREEN}✓ 设置 $disk 的I/O调度器为deadline${NC}"
+                elif grep -q "none" /sys/block/$disk/queue/scheduler; then
+                    echo none > /sys/block/$disk/queue/scheduler
+                    echo -e "${GREEN}✓ 设置 $disk 的I/O调度器为none${NC}"
+                else
+                    echo -e "${YELLOW}⚠ 无法设置 $disk 的I/O调度器，可用选项:${NC}"
+                    cat /sys/block/$disk/queue/scheduler
+                fi
+                
+                # 设置较大的读写预读缓冲
+                if [ -f "/sys/block/$disk/queue/read_ahead_kb" ]; then
+                    echo 4096 > /sys/block/$disk/queue/read_ahead_kb
+                    echo -e "${GREEN}✓ 设置 $disk 的读预读为4096KB${NC}"
+                fi
+            fi
+        done
+        
+        # 优化IO相关参数
+        if [ -f /proc/sys/vm/dirty_ratio ]; then
+            echo 15 > /proc/sys/vm/dirty_ratio
+            echo 5 > /proc/sys/vm/dirty_background_ratio
+            echo 500 > /proc/sys/vm/dirty_writeback_centisecs
+            echo -e "${GREEN}✓ 优化VM脏页参数以提高I/O性能${NC}"
+        fi
+        ;;
+        
+    "vpn")
+        # 为VPN服务器应用额外优化
+        echo -e "${BLUE}[•] 应用VPN服务器额外优化...${NC}"
+        
+        # 确保NAT和转发相关模块加载
+        for module in nf_conntrack nf_conntrack_ipv4 nf_nat iptable_nat ip_tables; do
+            if ! lsmod | grep -q $module; then
+                echo -e "${BLUE}[•] 加载模块 $module...${NC}"
+                modprobe $module 2>/dev/null || echo -e "${YELLOW}⚠ 无法加载模块 $module${NC}"
+            fi
+        done
+        
+        # 创建简单的iptables规则以启用NAT（仅建议，不直接应用）
+        echo -e "${YELLOW}建议: 确保您的VPN服务器配置了适当的NAT规则，例如:${NC}"
+        echo -e "${YELLOW}  iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE${NC}"
+        echo -e "${YELLOW}  iptables -A FORWARD -i eth0 -o tun0 -m state --state RELATED,ESTABLISHED -j ACCEPT${NC}"
+        echo -e "${YELLOW}  iptables -A FORWARD -i tun0 -o eth0 -j ACCEPT${NC}"
+        
+        # 检查并建议开启TLS硬件加速（如果支持）
+        if grep -q aes /proc/cpuinfo; then
+            echo -e "${GREEN}✓ 检测到AES-NI CPU支持，建议启用TLS硬件加速${NC}"
+            if command -v openssl &>/dev/null; then
+                openssl_engines=$(openssl engine 2>/dev/null)
+                if echo "$openssl_engines" | grep -q aesni; then
+                    echo -e "${GREEN}✓ OpenSSL已支持AES-NI硬件加速${NC}"
+                else
+                    echo -e "${YELLOW}⚠ OpenSSL可能未启用硬件加速，建议检查${NC}"
+                fi
+            fi
+        fi
+        ;;
+        
+    *)
+        # 通用服务器优化
+        echo -e "${BLUE}[•] 应用通用服务器优化...${NC}"
+        ;;
+esac
+
 # 验证设置是否生效
 verify_settings() {
     echo -e "${BLUE}[•] 验证配置是否已生效...${NC}"
@@ -629,6 +874,40 @@ verify_settings() {
     else
         echo -e "${YELLOW}⚠ apply-sysctl.service未启用${NC}"
     fi
+    
+    # 检查服务器类型特定配置
+    case $SERVER_TYPE in
+        "web")
+            somaxconn=$(sysctl -n net.core.somaxconn 2>/dev/null || echo "0")
+            if [[ "$somaxconn" -ge "16384" ]]; then
+                echo -e "${GREEN}✓ Web服务器连接队列(somaxconn)已优化: $somaxconn${NC}"
+            else
+                echo -e "${YELLOW}⚠ Web服务器连接队列(somaxconn)可能未优化: $somaxconn${NC}"
+            fi
+            ;;
+        "cdn")
+            dirty_ratio=$(cat /proc/sys/vm/dirty_ratio 2>/dev/null || echo "0")
+            if [[ "$dirty_ratio" -eq "15" ]]; then
+                echo -e "${GREEN}✓ CDN节点I/O相关参数已优化${NC}"
+            else
+                echo -e "${YELLOW}⚠ CDN节点I/O相关参数可能未优化${NC}"
+            fi
+            ;;
+        "vpn")
+            ip_forward=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo "0")
+            if [[ "$ip_forward" -eq "1" ]]; then
+                echo -e "${GREEN}✓ VPN服务器IP转发已启用${NC}"
+            else
+                echo -e "${YELLOW}⚠ VPN服务器IP转发未启用${NC}"
+            fi
+            
+            if lsmod | grep -q nf_conntrack; then
+                echo -e "${GREEN}✓ VPN服务器连接跟踪模块已加载${NC}"
+            else
+                echo -e "${YELLOW}⚠ VPN服务器连接跟踪模块未加载${NC}"
+            fi
+            ;;
+    esac
 }
 
 # 执行验证
@@ -638,6 +917,7 @@ verify_settings
 echo -e "\n${BLUE}╔══════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║                ${GREEN}系统优化完成报告${BLUE}                        ║${NC}"
 echo -e "${BLUE}╚══════════════════════════════════════════════════════════╝${NC}"
+echo -e "${GREEN}✓ 服务器类型      :${NC} $SERVER_TYPE"
 echo -e "${GREEN}✓ 内核版本        :${NC} $kernel_version"
 echo -e "${GREEN}✓ 内存            :${NC} ${mem_gb} GB"
 echo -e "${GREEN}✓ CPU 核心        :${NC} ${cpu_cores} 核"
@@ -645,6 +925,7 @@ echo -e "${GREEN}✓ 流量管理算法    :${NC} ${QOS_ALGO}"
 echo -e "${GREEN}✓ 文件描述符      :${NC} soft=$nofile_soft, hard=$nofile_hard"
 echo -e "${GREEN}✓ TCP 缓冲上限    :${NC} $rmem_max 字节（约 $((rmem_max/1024/1024))MB）"
 echo -e "${GREEN}✓ UDP/QUIC 支持   :${NC} 已启用"
+echo -e "${GREEN}✓ 最大连接队列    :${NC} $somaxconn"
 
 if grep -q "tcp_congestion_control = bbr" /etc/sysctl.conf; then
     if [[ $is_xanmod -eq 1 ]]; then
@@ -658,18 +939,38 @@ fi
 
 echo -e "${GREEN}✓ 系统限制生效    :${NC} ulimit + systemd + pam"
 echo -e "${GREEN}✓ 系统重启持久化  :${NC} apply-sysctl.service + rc.local"
-echo -e "${GREEN}✓ 立即生效方式    :${NC} sysctl + tc + ulimit"
+
+# 服务器类型特定信息
+case $SERVER_TYPE in
+    "web")
+        echo -e "${GREEN}✓ Web服务器优化  :${NC} 高并发连接、低延迟、快速响应"
+        ;;
+    "cdn")
+        echo -e "${GREEN}✓ CDN节点优化    :${NC} 大缓冲区、I/O优化、高吞吐量"
+        ;;
+    "vpn")
+        echo -e "${GREEN}✓ VPN服务器优化  :${NC} NAT转发、连接跟踪、数据包处理"
+        ;;
+    *)
+        echo -e "${GREEN}✓ 通用服务器优化 :${NC} 均衡性能、标准配置"
+        ;;
+esac
 
 echo -e "\n${YELLOW}提示: 验证配置的命令:${NC}"
 echo -e "  • ${CYAN}检查文件描述符限制:${NC} ulimit -n"
 echo -e "  • ${CYAN}检查TCP配置:${NC} sysctl -a | grep tcp"
 echo -e "  • ${CYAN}检查队列策略:${NC} tc qdisc show"
+echo -e "  • ${CYAN}检查最大连接数:${NC} sysctl net.core.somaxconn"
 echo -e "\n${YELLOW}提示: 如需完全生效，请重启系统或重新登录会话${NC}"
 
 echo -e "\n${CYAN}流量管理算法说明：${NC}"
 for desc in "${qos_descriptions[@]}"; do
     IFS=':' read -r algo explanation <<< "$desc"
-    echo -e "  ${YELLOW}$(printf "%-10s" "$algo"):${NC} $explanation"
+    if [[ "$algo" == "$QOS_ALGO" ]]; then
+        echo -e "  ${GREEN}$(printf "%-10s" "$algo"):${NC} $explanation ${CYAN}(已启用)${NC}"
+    else
+        echo -e "  ${YELLOW}$(printf "%-10s" "$algo"):${NC} $explanation"
+    fi
 done
 echo -e "${BLUE}════════════════════════════════════════════════════════════${NC}"
 
@@ -690,4 +991,88 @@ fi
 
 # 如果没有错误，脚本将成功完成
 echo -e "${GREEN}脚本执行完成！配置已应用并设置为在系统启动时自动加载。${NC}"
+echo -e "${YELLOW}建议: 重启系统以确保所有优化生效。${NC}"
+# 服务器类型特定信息
+case $SERVER_TYPE in
+    "web")
+        echo -e "${GREEN}✓ Web服务器优化  :${NC} 高并发连接、低延迟、快速响应"
+        if command -v nginx &>/dev/null || command -v apache2 &>/dev/null; then
+            echo -e "${GREEN}✓ 检测到Web服务器软件，建议设置:${NC}"
+            echo -e "  • ${CYAN}worker进程数: $cpu_cores${NC}"
+            echo -e "  • ${CYAN}连接数上限: $nofile_soft${NC}"
+            echo -e "  • ${CYAN}缓存设置: 启用静态资源缓存${NC}"
+        fi
+        ;;
+    "cdn")
+        echo -e "${GREEN}✓ CDN节点优化    :${NC} 大缓冲区、I/O优化、高吞吐量"
+        echo -e "  • ${CYAN}磁盘I/O优化已配置${NC}"
+        echo -e "  • ${CYAN}TCP接收/发送缓冲区已最大化${NC}"
+        echo -e "  • ${CYAN}推荐使用SSD以获得最佳性能${NC}"
+        ;;
+    "vpn")
+        echo -e "${GREEN}✓ VPN服务器优化  :${NC} NAT转发、连接跟踪、数据包处理"
+        echo -e "  • ${CYAN}IP转发已启用${NC}"
+        echo -e "  • ${CYAN}连接跟踪表已扩大${NC}"
+        echo -e "  • ${CYAN}建议配置适当的iptables规则${NC}"
+        ;;
+    *)
+        echo -e "${GREEN}✓ 通用服务器优化 :${NC} 均衡性能、标准配置"
+        ;;
+esac
+
+echo -e "\n${YELLOW}提示: 验证配置的命令:${NC}"
+echo -e "  • ${CYAN}检查文件描述符限制:${NC} ulimit -n"
+echo -e "  • ${CYAN}检查TCP配置:${NC} sysctl -a | grep tcp"
+echo -e "  • ${CYAN}检查队列策略:${NC} tc qdisc show"
+echo -e "  • ${CYAN}检查最大连接数:${NC} sysctl net.core.somaxconn"
+echo -e "\n${YELLOW}提示: 如需完全生效，请重启系统或重新登录会话${NC}"
+
+echo -e "\n${CYAN}流量管理算法说明：${NC}"
+for desc in "${qos_descriptions[@]}"; do
+    IFS=':' read -r algo explanation <<< "$desc"
+    if [[ "$algo" == "$QOS_ALGO" ]]; then
+        echo -e "  ${GREEN}$(printf "%-10s" "$algo"):${NC} $explanation ${CYAN}(已启用)${NC}"
+    else
+        echo -e "  ${YELLOW}$(printf "%-10s" "$algo"):${NC} $explanation"
+    fi
+done
+echo -e "${BLUE}════════════════════════════════════════════════════════════${NC}"
+
+# 如果是XanMod内核，显示特别提示
+if [[ $is_xanmod -eq 1 ]]; then
+    echo -e "${GREEN}✓ 检测到XanMod内核，已应用特定优化:${NC}"
+    echo -e "  • ${CYAN}BBR将自动使用最佳版本 (根据XanMod内核特性)${NC}"
+    echo -e "  • ${CYAN}已启用更积极的网络参数优化${NC}"
+    echo -e "  • ${CYAN}已优化调度器设置${NC}"
+fi
+
+# 如果检测到Debian 12，显示特别提示
+if [[ "$debian_version" == "12" ]]; then
+    echo -e "${GREEN}✓ 检测到Debian 12，已应用特定优化:${NC}"
+    echo -e "  • ${CYAN}已适配Debian 12的软件包和模块管理${NC}"
+    echo -e "  • ${CYAN}已兼容systemd服务配置${NC}"
+fi
+
+# 根据服务器类型提供进一步优化建议
+echo -e "\n${BLUE}[•] 进一步优化建议 - ${SERVER_TYPE}服务器:${NC}"
+case $SERVER_TYPE in
+    "web")
+        echo -e "  • ${YELLOW}Web服务器应考虑启用HTTP/2以提高性能${NC}"
+        echo -e "  • ${YELLOW}使用TLS 1.3和OCSP stapling加速SSL${NC}"
+        echo -e "  • ${YELLOW}考虑使用PageSpeed或Brotli压缩提高性能${NC}"
+        ;;
+    "cdn")
+        echo -e "  • ${YELLOW}确保您的文件系统使用合适的块大小和inode数量${NC}"
+        echo -e "  • ${YELLOW}考虑使用边缘缓存和分层缓存策略${NC}"
+        echo -e "  • ${YELLOW}考虑部署XFS文件系统以获得更好的大文件处理性能${NC}"
+        ;;
+    "vpn")
+        echo -e "  • ${YELLOW}OpenVPN用户应考虑使用UDP而非TCP协议${NC}"
+        echo -e "  • ${YELLOW}确保CPU支持AES-NI并在VPN软件中启用${NC}"
+        echo -e "  • ${YELLOW}考虑使用WireGuard替代OpenVPN以获得更高性能${NC}"
+        ;;
+esac
+
+# 如果没有错误，脚本将成功完成
+echo -e "\n${GREEN}脚本执行完成！配置已应用并设置为在系统启动时自动加载。${NC}"
 echo -e "${YELLOW}建议: 重启系统以确保所有优化生效。${NC}"
