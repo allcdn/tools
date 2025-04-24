@@ -503,11 +503,9 @@ echo -e "${BLUE}[•] 创建系统服务确保配置持久化...${NC}"
 if [[ -d /etc/systemd/system ]]; then
     # 检查是否已存在，避免重复创建
     if [ -f /etc/systemd/system/apply-sysctl.service ]; then
-# 检查是否已存在，避免重复创建
-    if [ -f /etc/systemd/system/apply-sysctl.service ]; then
         echo -e "${BLUE}[•] 更新已存在的 apply-sysctl 服务...${NC}"
         systemctl disable apply-sysctl.service 2>/dev/null || true
-        rm /etc/systemd/system/apply-sysctl.service
+		rm /etc/systemd/system/apply-sysctl.service
     fi
     
     cat > /etc/systemd/system/apply-sysctl.service <<EOF
@@ -692,4 +690,4 @@ fi
 
 # 如果没有错误，脚本将成功完成
 echo -e "${GREEN}脚本执行完成！配置已应用并设置为在系统启动时自动加载。${NC}"
-echo -e "${YELLOW}建议: 重启系统以确保所有优化生效。${NC}"   
+echo -e "${YELLOW}建议: 重启系统以确保所有优化生效。${NC}"
