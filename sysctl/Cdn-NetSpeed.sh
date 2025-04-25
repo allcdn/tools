@@ -27,13 +27,16 @@ rmem_max=$((mem_gb * 1024 * 1024))
 [ "$rmem_max" -gt 134217728 ] && rmem_max=134217728
 [ "$rmem_max" -lt 16777216 ] && rmem_max=16777216
 
-# 备份原始配置不存在则创建
+# 创建必要的目录
+mkdir -p /etc/sysctl.d
+
+# 备份原始配置（如果文件存在）
 if [ -f /etc/sysctl.d/99-sysctl.conf ]; then
-  cp /etc/sysctl.d/99-sysctl.conf /etc/sysctl.d/99-sysctl.conf.bak_$(date +%F_%T)
+    cp /etc/sysctl.d/99-sysctl.conf /etc/sysctl.d/99-sysctl.conf.bak_$(date +%F_%T)
+    echo -e "${GREEN}[✓] 已备份原始sysctl配置${NC}"
 else
-  echo "文件不存在，将创建新文件"
-  mkdir -p /etc/sysctl.d
-  touch /etc/sysctl.d/99-sysctl.conf
+    echo -e "${YELLOW}[!] 未找到原始sysctl配置，将创建新文件${NC}"
+    touch /etc/sysctl.d/99-sysctl.conf
 fi
 
 # 写入优化配置
