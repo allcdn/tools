@@ -27,7 +27,7 @@ rmem_max=$((mem_gb * 1024 * 1024))
 [ "$rmem_max" -gt 134217728 ] && rmem_max=134217728
 [ "$rmem_max" -lt 16777216 ] && rmem_max=16777216
 
-# 备份原始配置
+# 备份原始配置不存在则创建
 if [ -f /etc/sysctl.d/99-sysctl.conf ]; then
   cp /etc/sysctl.d/99-sysctl.conf /etc/sysctl.d/99-sysctl.conf.bak_$(date +%F_%T)
 else
