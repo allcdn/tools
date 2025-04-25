@@ -11,3 +11,7 @@ xanmod内核专属网络性能优化，你可以在终端中运行以下命令�
 ```bash
 bash <(wget -qO- https://raw.githubusercontent.com/allcdn/tools/main/sysctl/xanmodpro.sh)
 ```
+xanmod内核专属CDN网络性能优化，你可以在终端中运行以下命令：
+```bash
+bash <(wget -qO- https://raw.githubusercontent.com/allcdn/tools/main/sysctl/Cdn-NetSpeed.sh)
+```
