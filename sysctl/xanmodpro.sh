@@ -743,13 +743,11 @@ EOF
 create_persistence_service() {
     echo -e "${BLUE}创建启动服务确保设置持久化...${NC}"
     
-    # 创建systemd服务
-    if [[ -d /etc/systemd/system ]]; then
-        # 准备服务执行脚本
-        SYSCTL_SERVICE_SCRIPT="/usr/local/bin/apply-sysctl.sh"
-        
-        # 创建服务执行脚本
-        cat > "$SYSCTL_SERVICE_SCRIPT" <<EOF
+    # 准备服务执行脚本
+    SYSCTL_SERVICE_SCRIPT="/usr/local/bin/apply-sysctl.sh"
+    
+    # 创建服务执行脚本
+    cat > "$SYSCTL_SERVICE_SCRIPT" <<EOF
 #!/bin/bash
 # XanModPro优化脚本启动服务 - 版本$SCRIPT_VERSION
 # 生成时间: $(date "+%Y-%m-%d %H:%M:%S")
@@ -764,8 +762,10 @@ done
 
 exit 0
 EOF
-        chmod +x "$SYSCTL_SERVICE_SCRIPT"
-        
+    chmod +x "$SYSCTL_SERVICE_SCRIPT"
+    
+    # 创建systemd服务
+    if [[ -d /etc/systemd/system ]]; then
         # 如果已存在则更新
         if [ -f /etc/systemd/system/apply-sysctl.service ]; then
             systemctl disable apply-sysctl.service 2>/dev/null || true
@@ -823,16 +823,43 @@ exit 0
 EOF
             chmod +x /etc/rc.local
         else
-            # 删除旧的设置
+            # 更新已有文件：删除旧的相关行
             sed -i '/XanModPro网络优化配置/d' /etc/rc.local
-            sed -i '/应用sysctl设置/d' /etc/rc.local
-            sed -i '/设置队列管理/d' /etc/rc.local
-            sed -i '/sysctl --system/d' /etc/rc.local
-            sed -i '/tc qdisc replace/d' /etc/rc.local
-            sed -i '/ip -o link show/d' /etc/rc.local
+            sed -i '/apply-sysctl.sh/d' /etc/rc.local
             
-            # 在exit 0之前添加我们的命令
-            sed -i '/exit 0/i # XanModPro网络优化配置 - 自动启动\n# 版本: '$SCRIPT_VERSION'\n# 更新时间: '$(date "+%Y-%m-%d %H:%M:%S")'\n\n# 执行优化脚本\n'$SYSCTL_SERVICE_SCRIPT'\n' /etc/rc.local
+            # 使用临时文件处理注释和脚本插入
+            TEMP_RC=$(mktemp)
+            
+            # 在exit 0前插入我们的命令
+            awk '
+            BEGIN {found_exit=0}
+            /exit 0/ {
+                print "# XanModPro网络优化配置 - 自动启动";
+                print "# 版本: '"$SCRIPT_VERSION"'";
+                print "# 更新时间: '"$(date "+%Y-%m-%d %H:%M:%S")"'";
+                print "";
+                print "# 执行优化脚本";
+                print "'"$SYSCTL_SERVICE_SCRIPT"'";
+                print "";
+                found_exit=1;
+            }
+            {print}
+            END {
+                if (found_exit == 0) {
+                    print "# XanModPro网络优化配置 - 自动启动";
+                    print "# 版本: '"$SCRIPT_VERSION"'";
+                    print "# 更新时间: '"$(date "+%Y-%m-%d %H:%M:%S")"'";
+                    print "";
+                    print "# 执行优化脚本";
+                    print "'"$SYSCTL_SERVICE_SCRIPT"'";
+                    print "";
+                    print "exit 0";
+                }
+            }' /etc/rc.local > "$TEMP_RC"
+            
+            # 覆盖原文件
+            cat "$TEMP_RC" > /etc/rc.local
+            rm -f "$TEMP_RC"
         fi
         
         echo -e "${GREEN}✓ 更新 /etc/rc.local${NC}"
