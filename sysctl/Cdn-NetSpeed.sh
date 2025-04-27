@@ -206,7 +206,7 @@ cat > /etc/security/limits.conf <<EOF
 * hard core unlimited
 * soft memlock unlimited
 * hard memlock unlimited
-root soft nofile $nofile_hard
+root soft nofile $nofile_soft
 root hard nofile $nofile_hard
 root soft nproc $nofile_soft
 root hard nproc $nofile_hard
