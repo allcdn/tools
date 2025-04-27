@@ -208,6 +208,12 @@ cat > /etc/security/limits.conf <<EOF
 * hard memlock unlimited
 root soft nofile $nofile_hard
 root hard nofile $nofile_hard
+root soft nproc $nofile_soft
+root hard nproc $nofile_hard
+root soft core unlimited
+root hard core unlimited
+root hard memlock unlimited
+root soft memlock unlimited
 EOF
 
 grep -q pam_limits.so /etc/pam.d/common-session || echo "session required pam_limits.so" >> /etc/pam.d/common-session
@@ -220,9 +226,11 @@ sed -i '/DefaultLimitCORE\|DefaultLimitNOFILE\|DefaultLimitNPROC/d' /etc/systemd
 # systemd 资源限制
 cat >> /etc/systemd/system.conf <<EOF
 [Manager]
+DefaultTimeoutStopSec=30s
 DefaultLimitCORE=infinity
 DefaultLimitNOFILE=$nofile_hard
 DefaultLimitNPROC=$nofile_hard
+DefaultTasksMax=infinity
 EOF
 
 systemctl daemon-reexec
