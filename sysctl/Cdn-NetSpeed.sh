@@ -43,19 +43,19 @@ PS3="请输入选项编号: "
 options=("fq_codel - 低延迟优先，适合游戏和实时应用" "fq - 平衡选择，适合大多数场景" "fq_pie - 高吞吐优先，适合大文件传输" "cake - 更智能但需要内核支持，适合复杂网络")
 select opt in "${options[@]}"; do
   case $opt in
-    "fq_codel - 低延迟优先，适合游戏和实时应用")
+    echo -e "fq_codel - 低延迟优先，适合游戏和实时应用")
       qdisc="fq_codel"
       break
       ;;
-    "fq - 平衡选择，适合大多数场景")
+    echo -e "fq - 平衡选择，适合大多数场景")
       qdisc="fq"
       break
       ;;
-    "fq_pie - 高吞吐优先，适合大文件传输")
+    echo -e "fq_pie - 高吞吐优先，适合大文件传输")
       qdisc="fq_pie"
       break
       ;;
-    "cake - 更智能但需要内核支持，适合复杂网络")
+    echo -e "cake - 更智能但需要内核支持，适合复杂网络")
       qdisc="cake"
       break
       ;;
