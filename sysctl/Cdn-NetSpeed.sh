@@ -179,6 +179,7 @@ net.ipv4.tcp_fack = 1
 net.ipv4.tcp_window_scaling = 1
 net.ipv4.tcp_adv_win_scale = 2
 net.ipv4.tcp_moderate_rcvbuf = 1
+net.ipv4.tcp_timestamps=1
 
 # 本地网络路由
 net.ipv4.conf.default.route_localnet = 1
