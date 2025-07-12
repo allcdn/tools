@@ -127,7 +127,7 @@ net.core.optmem_max = 65536
 
 # 网络设备缓冲区优化
 net.core.netdev_budget = 600
-net.core.netdev_budget_usecs = 5000
+#net.core.netdev_budget_usecs = 5000
 
 # 网络性能调优
 net.core.busy_read = 50
