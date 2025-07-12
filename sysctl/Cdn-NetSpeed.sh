@@ -117,13 +117,22 @@ net.core.somaxconn = 65535
 net.core.netdev_max_backlog = $((cpu_cores * 65536 < 524288 ? cpu_cores * 65536 : 524288))
 
 # TCP 内存参数
-net.ipv4.tcp_rmem = 4096 262144 $rmem_max
-net.ipv4.tcp_wmem = 4096 262144 $rmem_max
+net.ipv4.tcp_rmem = 8192 262144 $rmem_max
+net.ipv4.tcp_wmem = 8192 262144 $rmem_max
 net.core.rmem_default = 262144
 net.core.wmem_default = 262144
 net.core.rmem_max = $rmem_max
 net.core.wmem_max = $rmem_max
 net.core.optmem_max = 65536
+
+# 网络设备缓冲区优化
+net.core.netdev_budget = 600
+net.core.netdev_budget_usecs = 5000
+
+# 网络性能调优
+net.core.busy_read = 50
+net.core.busy_poll = 50
+net.ipv4.tcp_autocorking = 0
 
 # UDP 优化
 net.ipv4.udp_mem = $((rmem_max/2)) $rmem_max $((rmem_max*2))
