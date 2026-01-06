@@ -1,276 +1,319 @@
 #!/bin/bash
 set -euo pipefail
+IFS=$'\n\t'
 
 # ====== 颜色定义 ======
-RED='\033[31m'
-GREEN='\033[32m'
-YELLOW='\033[33m'
-BLUE='\033[34m'
-NC='\033[0m'
+readonly RED='\033[31m'
+readonly GREEN='\033[32m'
+readonly YELLOW='\033[33m'
+readonly BLUE='\033[34m'
+readonly NC='\033[0m'
 
-echo -e "${BLUE}[•] 正在运行智能适配系统优化...${NC}"
+# ====== 日志函数 ======
+log_info() { echo -e "${BLUE}[•]${NC} $*"; }
+log_success() { echo -e "${GREEN}[✓]${NC} $*"; }
+log_warning() { echo -e "${YELLOW}[!]${NC} $*"; }
+log_error() { echo -e "${RED}[✗]${NC} $*" >&2; }
 
-# 获取系统信息
-mem_gb=$(awk '/MemTotal/ {printf "%.0f", $2/1024/1024}' /proc/meminfo)
-cpu_cores=$(nproc)
-is_xanmod=$(uname -r | grep -iq xanmod && echo 1 || echo 0)
-kernel_version=$(uname -r)
+# ====== 错误处理 ======
+cleanup() {
+    local exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+        log_error "脚本执行失败 (退出码: $exit_code)"
+        log_warning "如有备份文件已创建，请检查并手动恢复"
+    fi
+}
+trap cleanup EXIT
 
-# 计算资源限制
-nofile_soft=$((mem_gb * 32768))
-nofile_hard=$((mem_gb * 65536))
-[ "$nofile_soft" -lt 262144 ] && nofile_soft=262144
-[ "$nofile_soft" -gt 1048576 ] && nofile_soft=1048576
-[ "$nofile_hard" -gt 2097152 ] && nofile_hard=2097152
-
-rmem_max=$((mem_gb * 1024 * 1024))
-[ "$rmem_max" -gt 134217728 ] && rmem_max=134217728
-[ "$rmem_max" -lt 16777216 ] && rmem_max=16777216
-
-# 使用 bbr 而非 bbr2
-tcp_cc="bbr"
-
-# 检查是否支持所选算法
-if ! grep -q "$tcp_cc" /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
-  # 如果 bbr 不支持，则使用 cubic
-  tcp_cc="cubic"
-  echo -e "${YELLOW}[!] 系统不支持BBR，将使用cubic${NC}"
+# ====== 权限检查 ======
+if [[ $EUID -ne 0 ]]; then
+   log_error "此脚本需要 root 权限运行"
+   exit 1
 fi
 
-# 让用户选择队列调度算法
-echo -e "${BLUE}[•] 请选择队列调度算法:${NC}"
-PS3="请输入选项编号: "
-options=("fq_codel - 低延迟优先，适合游戏和实时应用" "fq - 平衡选择，适合大多数场景" "fq_pie - 高吞吐优先，适合大文件传输" "cake - 更智能但需要内核支持，适合复杂网络")
-select opt in "${options[@]}"; do
-  case $opt in
-    "fq_codel - 低延迟优先，适合游戏和实时应用")
-      qdisc="fq_codel"
-      break
-      ;;
-    "fq - 平衡选择，适合大多数场景")
-      qdisc="fq"
-      break
-      ;;
-    "fq_pie - 高吞吐优先，适合大文件传输")
-      qdisc="fq_pie"
-      break
-      ;;
-    "cake - 更智能但需要内核支持，适合复杂网络")
-      qdisc="cake"
-      break
-      ;;
-    *) 
-      echo -e "${RED}无效选项，请重新选择${NC}"
-      ;;
-  esac
-done
+log_info "正在运行智能适配系统优化..."
 
-echo -e "${GREEN}[✓] 已选择 $qdisc 作为队列调度算法${NC}"
+# ====== 获取系统信息 ======
+readonly MEM_GB=$(awk '/MemTotal/ {printf "%.0f", $2/1024/1024}' /proc/meminfo)
+readonly CPU_CORES=$(nproc)
+readonly KERNEL_VERSION=$(uname -r)
+readonly IS_XANMOD=$(uname -r | grep -iq xanmod && echo 1 || echo 0)
 
-# 创建必要的目录
-mkdir -p /etc/sysctl.d
-
-# 备份原始配置（如果文件存在）
-if [ -f /etc/sysctl.d/99-sysctl.conf ]; then
-    cp /etc/sysctl.d/99-sysctl.conf /etc/sysctl.d/99-sysctl.conf.bak_$(date +%F_%T)
-    echo -e "${GREEN}[✓] 已备份原始sysctl配置${NC}"
-else
-    echo -e "${YELLOW}[!] 未找到原始sysctl配置，将创建新文件${NC}"
-    touch /etc/sysctl.d/99-sysctl.conf
+# 验证系统信息
+if [[ $MEM_GB -lt 1 || $CPU_CORES -lt 1 ]]; then
+    log_error "无法正确获取系统信息 (内存: ${MEM_GB}GB, CPU: ${CPU_CORES}核)"
+    exit 1
 fi
 
-# 清空旧配置
-echo -e "${YELLOW}[!] 正在清空旧配置...${NC}"
-> /etc/sysctl.d/99-sysctl.conf
+# ====== 计算资源限制 ======
+calc_nofile_limits() {
+    local soft=$((MEM_GB * 32768))
+    local hard=$((MEM_GB * 65536))
+    
+    [[ $soft -lt 262144 ]] && soft=262144
+    [[ $soft -gt 1048576 ]] && soft=1048576
+    [[ $hard -lt $soft ]] && hard=$soft
+    [[ $hard -gt 2097152 ]] && hard=2097152
+    
+    echo "$soft $hard"
+}
 
-# 写入优化配置
-cat > /etc/sysctl.d/99-sysctl.conf <<EOF
-# 内核: $kernel_version | XanMod: $is_xanmod | 内存: ${mem_gb}GB | CPU: ${cpu_cores}核
-# 优化时间: $(date '+%Y-%m-%d %H:%M:%S')
+calc_rmem_max() {
+    local rmem=$((MEM_GB * 1024 * 1024))
+    [[ $rmem -gt 134217728 ]] && rmem=134217728
+    [[ $rmem -lt 16777216 ]] && rmem=16777216
+    echo "$rmem"
+}
 
-# 文件系统与监控优化
-fs.file-max = $((nofile_hard * 2))
+read -r NOFILE_SOFT NOFILE_HARD <<< "$(calc_nofile_limits)"
+readonly RMEM_MAX=$(calc_rmem_max)
+
+log_success "系统信息: 内核=${KERNEL_VERSION}, 内存=${MEM_GB}GB, CPU=${CPU_CORES}核"
+
+# ====== 选择拥塞控制算法 ======
+select_tcp_cc() {
+    local available_cc
+    if [[ -f /proc/sys/net/ipv4/tcp_available_congestion_control ]]; then
+        available_cc=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control)
+    else
+        log_warning "无法读取可用拥塞控制算法，使用默认值"
+        echo "cubic"
+        return
+    fi
+    
+    if grep -qw "bbr" <<< "$available_cc"; then
+        echo "bbr"
+    elif grep -qw "cubic" <<< "$available_cc"; then
+        log_warning "系统不支持 BBR，将使用 cubic"
+        echo "cubic"
+    else
+        log_warning "未找到常用算法，使用系统默认"
+        echo "cubic"
+    fi
+}
+
+readonly TCP_CC=$(select_tcp_cc)
+
+# ====== 选择队列调度算法 ======
+select_qdisc() {
+    log_info "请选择队列调度算法:"
+    local PS3="请输入选项编号 (1-4): "
+    local options=(
+        "fq_codel - 低延迟优先，适合游戏和实时应用"
+        "fq - 平衡选择，适合大多数场景"
+        "fq_pie - 高吞吐优先，适合大文件传输"
+        "cake - 更智能但需要内核支持，适合复杂网络"
+    )
+    
+    local qdisc=""
+    select opt in "${options[@]}"; do
+        case $REPLY in
+            1) qdisc="fq_codel"; break ;;
+            2) qdisc="fq"; break ;;
+            3) qdisc="fq_pie"; break ;;
+            4) qdisc="cake"; break ;;
+            *) log_error "无效选项，请输入 1-4" ;;
+        esac
+    done
+    
+    echo "$qdisc"
+}
+
+readonly QDISC=$(select_qdisc)
+log_success "已选择 ${QDISC} 作为队列调度算法"
+
+# ====== 备份和写入配置 ======
+backup_and_write_sysctl() {
+    local sysctl_file="/etc/sysctl.d/99-optimized.conf"
+    local backup_dir="/etc/sysctl.d/backups"
+    
+    mkdir -p "$backup_dir"
+    
+    if [[ -f $sysctl_file ]]; then
+        local backup_file="${backup_dir}/99-optimized.conf.$(date +%F_%H%M%S)"
+        cp "$sysctl_file" "$backup_file"
+        log_success "已备份原始配置到: $backup_file"
+    fi
+    
+    cat > "$sysctl_file" <<EOF
+# 自动生成的优化配置
+# 内核: $KERNEL_VERSION | 内存: ${MEM_GB}GB | CPU: ${CPU_CORES}核
+# 生成时间: $(date '+%Y-%m-%d %H:%M:%S')
+
+# ====== 文件系统与监控 ======
+fs.file-max = $((NOFILE_HARD * 2))
 fs.inotify.max_user_instances = 8192
 fs.inotify.max_user_watches = 2097152
 fs.inotify.max_queued_events = 65536
 
-# TCP 拥塞控制与队列调度
-net.core.default_qdisc = $qdisc
-net.ipv4.tcp_congestion_control = $tcp_cc
-net.mptcp.enabled = 1
+# ====== TCP 拥塞控制 ======
+net.core.default_qdisc = $QDISC
+net.ipv4.tcp_congestion_control = $TCP_CC
 net.ipv4.tcp_ecn = 1
 net.ipv4.tcp_fastopen = 3
 net.ipv4.tcp_mtu_probing = 1
 net.ipv4.tcp_slow_start_after_idle = 0
-net.ipv4.tcp_base_mss = 1024
 
-# TCP 连接优化
+# ====== TCP 连接优化 ======
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_fin_timeout = 8
 net.ipv4.tcp_keepalive_time = 120
 net.ipv4.tcp_keepalive_intvl = 15
 net.ipv4.tcp_keepalive_probes = 5
+net.ipv4.tcp_max_syn_backlog = $((CPU_CORES * 65536 < 524288 ? CPU_CORES * 65536 : 524288))
 
-# 队列与缓冲区优化
-net.ipv4.tcp_max_syn_backlog = $((cpu_cores * 65536 < 524288 ? cpu_cores * 65536 : 524288))
+# ====== 队列与缓冲区 ======
 net.core.somaxconn = 65535
-net.core.netdev_max_backlog = $((cpu_cores * 65536 < 524288 ? cpu_cores * 65536 : 524288))
+net.core.netdev_max_backlog = $((CPU_CORES * 65536 < 524288 ? CPU_CORES * 65536 : 524288))
+net.core.netdev_budget = 600
 
-# TCP 内存参数
-net.ipv4.tcp_rmem = 8192 262144 $rmem_max
-net.ipv4.tcp_wmem = 8192 262144 $rmem_max
+# ====== TCP/UDP 内存 ======
+net.ipv4.tcp_rmem = 8192 262144 $RMEM_MAX
+net.ipv4.tcp_wmem = 8192 262144 $RMEM_MAX
 net.core.rmem_default = 262144
 net.core.wmem_default = 262144
-net.core.rmem_max = $rmem_max
-net.core.wmem_max = $rmem_max
+net.core.rmem_max = $RMEM_MAX
+net.core.wmem_max = $RMEM_MAX
 net.core.optmem_max = 65536
-
-# 网络设备缓冲区优化
-net.core.netdev_budget = 600
-#net.core.netdev_budget_usecs = 5000
-
-# 网络性能调优
-net.core.busy_read = 50
-net.core.busy_poll = 50
-net.ipv4.tcp_autocorking = 0
-
-# UDP 优化
-net.ipv4.udp_mem = $((rmem_max/2)) $rmem_max $((rmem_max*2))
 net.ipv4.udp_rmem_min = 16384
 net.ipv4.udp_wmem_min = 16384
 
-# 端口范围与转发
+# ====== 网络性能 ======
+net.core.busy_read = 50
+net.core.busy_poll = 50
+net.ipv4.tcp_autocorking = 0
 net.ipv4.ip_local_port_range = 1024 65535
+
+# ====== IPv4/IPv6 转发 ======
 net.ipv4.ip_forward = 1
 net.ipv6.conf.all.forwarding = 1
+net.ipv4.conf.all.route_localnet = 1
+net.ipv4.conf.default.route_localnet = 1
 
-# IPv6 优化
-net.ipv6.conf.default.router_solicitations = 0
-net.ipv6.conf.default.accept_ra_rtr_pref = 0
-net.ipv6.conf.default.accept_ra_pinfo = 0
-net.ipv6.conf.default.accept_ra_defrtr = 0
+# ====== 安全设置 ======
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_rfc1337 = 1
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.icmp_ignore_bogus_error_responses = 1
 net.ipv6.conf.all.accept_redirects = 0
-net.ipv6.conf.default.accept_redirects = 0
-net.ipv6.conf.all.autoconf = 0
-net.ipv6.conf.default.autoconf = 0
-net.ipv6.conf.default.dad_transmits = 0
-net.ipv6.conf.default.max_addresses = 1
-net.ipv6.route.max_size = 65536
+
+# ====== 邻居表 ======
+net.ipv4.neigh.default.gc_thresh1 = 4096
+net.ipv4.neigh.default.gc_thresh2 = 8192
+net.ipv4.neigh.default.gc_thresh3 = 16384
 net.ipv6.neigh.default.gc_thresh1 = 4096
 net.ipv6.neigh.default.gc_thresh2 = 8192
 net.ipv6.neigh.default.gc_thresh3 = 16384
 
-# 安全性设置
-net.ipv4.icmp_echo_ignore_all = 0
-net.ipv4.icmp_echo_ignore_broadcasts = 1
-net.ipv4.icmp_ignore_bogus_error_responses = 1
-net.ipv4.conf.all.accept_redirects = 0
-net.ipv4.conf.default.accept_redirects = 0
-net.ipv4.conf.all.secure_redirects = 0
-net.ipv4.conf.default.secure_redirects = 0
-net.ipv4.conf.all.send_redirects = 0
-net.ipv4.conf.default.send_redirects = 0
-net.ipv4.conf.default.rp_filter = 1
-net.ipv4.conf.all.rp_filter = 1
-net.ipv4.conf.all.log_martians = 1
-
-# 邻居表大小
-net.ipv4.neigh.default.gc_thresh1 = 4096
-net.ipv4.neigh.default.gc_thresh2 = 8192
-net.ipv4.neigh.default.gc_thresh3 = 16384
-
-# TCP 功能开关
-net.ipv4.tcp_syncookies = 1
-net.ipv4.tcp_no_metrics_save = 1
-net.ipv4.tcp_rfc1337 = 1
+# ====== TCP 功能 ======
 net.ipv4.tcp_sack = 1
 net.ipv4.tcp_fack = 1
 net.ipv4.tcp_window_scaling = 1
-net.ipv4.tcp_adv_win_scale = 2
+net.ipv4.tcp_timestamps = 1
 net.ipv4.tcp_moderate_rcvbuf = 1
-net.ipv4.tcp_timestamps=1
-
-# 本地网络路由
-net.ipv4.conf.default.route_localnet = 1
-net.ipv4.conf.all.route_localnet = 1
 EOF
 
-echo -e "${GREEN}[✓] 已写入新配置${NC}"
+    log_success "已写入 sysctl 配置: $sysctl_file"
+}
 
-# 应用新配置
-echo -e "${BLUE}[•] 正在应用新配置...${NC}"
-sysctl --system
+backup_and_write_sysctl
 
-# 清空旧的资源限制配置
-echo -e "${YELLOW}[!] 正在清空旧的资源限制配置...${NC}"
-> /etc/security/limits.conf
+# ====== 应用 sysctl 配置 ======
+log_info "正在应用 sysctl 配置..."
+if sysctl --system > /dev/null 2>&1; then
+    log_success "sysctl 配置应用成功"
+else
+    log_warning "部分 sysctl 参数可能不被当前内核支持"
+fi
 
-# 设置 limits.conf
-cat > /etc/security/limits.conf <<EOF
-# 系统资源限制配置 - $(date '+%Y-%m-%d')
-* soft nofile $nofile_soft
-* hard nofile $nofile_hard
-* soft nproc $nofile_soft
-* hard nproc $nofile_hard
-* soft core unlimited
-* hard core unlimited
-* soft memlock unlimited
-* hard memlock unlimited
-root soft nofile $nofile_soft
-root hard nofile $nofile_hard
-root soft nproc $nofile_soft
-root hard nproc $nofile_hard
-root soft core unlimited
-root hard core unlimited
-root hard memlock unlimited
-root soft memlock unlimited
+# ====== 配置 limits.conf ======
+setup_limits() {
+    local limits_file="/etc/security/limits.conf"
+    local backup_file="${limits_file}.bak.$(date +%F_%H%M%S)"
+    
+    [[ -f $limits_file ]] && cp "$limits_file" "$backup_file"
+    
+    cat > "$limits_file" <<EOF
+# 系统资源限制配置 - $(date '+%Y-%m-%d %H:%M:%S')
+*     soft nofile  $NOFILE_SOFT
+*     hard nofile  $NOFILE_HARD
+*     soft nproc   $NOFILE_SOFT
+*     hard nproc   $NOFILE_HARD
+*     soft memlock unlimited
+*     hard memlock unlimited
+root  soft nofile  $NOFILE_HARD
+root  hard nofile  $NOFILE_HARD
+root  soft nproc   $NOFILE_HARD
+root  hard nproc   $NOFILE_HARD
 EOF
 
-grep -q pam_limits.so /etc/pam.d/common-session || echo "session required pam_limits.so" >> /etc/pam.d/common-session
-grep -q pam_limits.so /etc/pam.d/common-session-noninteractive || echo "session required pam_limits.so" >> /etc/pam.d/common-session-noninteractive
+    log_success "已更新 limits.conf"
+    
+    # 确保 PAM 加载 limits 模块
+    for pam_file in /etc/pam.d/common-session /etc/pam.d/common-session-noninteractive; do
+        if [[ -f $pam_file ]] && ! grep -q "pam_limits.so" "$pam_file"; then
+            echo "session required pam_limits.so" >> "$pam_file"
+            log_success "已更新 $pam_file"
+        fi
+    done
+}
 
-# 清空旧的systemd资源限制
-echo -e "${YELLOW}[!] 正在清空旧的systemd资源限制...${NC}"
-sed -i '/DefaultLimitCORE\|DefaultLimitNOFILE\|DefaultLimitNPROC/d' /etc/systemd/system.conf
+setup_limits
 
-# systemd 资源限制
-cat >> /etc/systemd/system.conf <<EOF
+# ====== 配置 systemd limits ======
+setup_systemd_limits() {
+    local drop_in_dir="/etc/systemd/system.conf.d"
+    mkdir -p "$drop_in_dir"
+    
+    cat > "${drop_in_dir}/90-custom-limits.conf" <<EOF
 [Manager]
 DefaultTimeoutStopSec=30s
 DefaultLimitCORE=infinity
-DefaultLimitNOFILE=$nofile_hard
-DefaultLimitNPROC=$nofile_hard
+DefaultLimitNOFILE=$NOFILE_HARD
+DefaultLimitNPROC=$NOFILE_HARD
 DefaultTasksMax=infinity
 EOF
 
-systemctl daemon-reexec
+    log_success "已创建 systemd drop-in 配置"
+    
+    if systemctl daemon-reexec 2>/dev/null; then
+        log_success "systemd 配置已重新加载"
+    else
+        log_warning "systemd 重新加载失败，需要重启系统"
+    fi
+}
 
-# 安全设置 ulimit，避免超过当前 shell 上限
-current_max=$(ulimit -Hn)
-if [ "$nofile_hard" -le "$current_max" ]; then
-  ulimit -n "$nofile_hard"
-else
-  echo -e "${YELLOW}⚠ 当前 shell 会话最大 open files 限制为 $current_max，已跳过设置更高的 ulimit。${NC}"
-  echo -e "${YELLOW}⚠ 请重启系统或重新登录以使更高 limits.conf 生效。${NC}"
-fi
+setup_systemd_limits
 
-ulimit -c unlimited
-[ -x "$(command -v prlimit)" ] && prlimit --pid $$ --nofile="$nofile_hard":"$nofile_hard"
+# ====== 验证配置 ======
+log_info "正在验证配置..."
+echo ""
+sysctl net.ipv4.tcp_congestion_control 2>/dev/null || true
+sysctl net.core.default_qdisc 2>/dev/null || true
+ulimit -Sn 2>/dev/null || true
+ulimit -Hn 2>/dev/null || true
 
-# 输出最终结果
-echo -e "\n${BLUE}==================== 优化完成报告 ====================${NC}"
-echo -e "${GREEN}✔ 内核版本        :${NC} $kernel_version"
-echo -e "${GREEN}✔ 内存            :${NC} ${mem_gb} GB"
-echo -e "${GREEN}✔ CPU 核心        :${NC} ${cpu_cores} 核"
-echo -e "${GREEN}✔ 拥塞控制算法    :${NC} $tcp_cc"
-echo -e "${GREEN}✔ 队列调度算法    :${NC} $qdisc"
-echo -e "${GREEN}✔ 文件描述符      :${NC} soft=$nofile_soft, hard=$nofile_hard"
-echo -e "${GREEN}✔ TCP 缓冲上限    :${NC} $rmem_max 字节（约 $((rmem_max/1024/1024))MB）"
-echo -e "${GREEN}✔ IPv6 优化       :${NC} 已启用"
-echo -e "${GREEN}✔ UDP/QUIC 支持   :${NC} 已启用"
-echo -e "${GREEN}✔ gRPC/HTTP2 增强 :${NC} TCP_FASTOPEN + $tcp_cc"
-echo -e "${GREEN}✔ 系统限制生效    :${NC} ulimit + systemd + pam"
-echo -e "${GREEN}✔ 立即生效方式    :${NC} sysctl --system, prlimit, ulimit"
-echo -e "${GREEN}✔ 验证命令        :${NC} ulimit -n ; sysctl -a | grep tcp"
-echo -e "\n${YELLOW}提示: 如需保障 limits.conf 生效，请重启服务或重新登录会话${NC}"
-echo -e "${BLUE}=====================================================${NC}"
+# ====== 输出报告 ======
+cat <<EOF
+
+${BLUE}==================== 优化完成报告 ====================${NC}
+${GREEN}✔ 内核版本        :${NC} $KERNEL_VERSION
+${GREEN}✔ 内存            :${NC} ${MEM_GB} GB
+${GREEN}✔ CPU 核心        :${NC} ${CPU_CORES} 核
+${GREEN}✔ 拥塞控制算法    :${NC} $TCP_CC
+${GREEN}✔ 队列调度算法    :${NC} $QDISC
+${GREEN}✔ 文件描述符      :${NC} soft=$NOFILE_SOFT, hard=$NOFILE_HARD
+${GREEN}✔ TCP 缓冲上限    :${NC} $RMEM_MAX 字节 ($((RMEM_MAX/1024/1024))MB)
+${GREEN}✔ 配置文件        :${NC} /etc/sysctl.d/99-optimized.conf
+${GREEN}✔ 备份目录        :${NC} /etc/sysctl.d/backups/
+
+${YELLOW}⚠ 重要提示:${NC}
+  1. 请重新登录或重启系统以完全应用 limits 配置
+  2. 验证命令: ulimit -n; sysctl -a | grep tcp_congestion
+  3. 如遇问题可从备份目录恢复配置
+${BLUE}=====================================================${NC}
+EOF
