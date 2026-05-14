@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-trap 'RET=$?; echo "❌ 脚本执行失败，出错行号: ${LINENO}，退出码: ${RET}"; exit "${RET}"' ERR
+trap 'RET=$?; echo "❌ 脚本执行失败，出错行号: ${LINENO}，退出码: ${RET}"; echo "失败命令: ${BASH_COMMAND}"; exit "${RET}"' ERR
 
 KEYRING="/etc/apt/keyrings/xanmod-archive-keyring.gpg"
 LISTFILE="/etc/apt/sources.list.d/xanmod-release.list"
@@ -30,12 +30,7 @@ install_prereqs() {
   export DEBIAN_FRONTEND=noninteractive
   log "安装基础依赖..."
   apt-get update
-  apt-get install -y --no-install-recommends \
-    ca-certificates \
-    wget \
-    gnupg \
-    lsb-release \
-    apt-transport-https
+  apt-get install -y --no-install-recommends ca-certificates wget gnupg lsb-release apt-transport-https
 }
 
 setup_repo() {
@@ -63,10 +58,10 @@ detect_cpu_level() {
   log "检测 CPU x86-64-v 等级..."
 
   ver="$(
-    wget -qO- https://dl.xanmod.org/check_x86-64_psabi.sh \
-      | bash 2>/dev/null \
-      | grep -oP 'x86-64-v\K[1-4]' \
-      | tail -n1
+    wget -qO- https://dl.xanmod.org/check_x86-64_psabi.sh |
+    bash 2>/dev/null |
+    grep -oP 'x86-64-v\K[1-4]' |
+    tail -n1
   )"
 
   ver="${ver:-3}"
