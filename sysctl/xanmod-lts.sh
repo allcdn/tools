@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-trap 'RET=$?; echo "❌ 脚本执行失败，出错行号: ${LINENO}，退出码: ${RET}"; echo "失败命令: ${BASH_COMMAND}"; exit "${RET}"' ERR
+trap 'ret=$?; echo "❌ 脚本失败，行号: ${LINENO}，退出码: ${ret}"; echo "命令: ${BASH_COMMAND}"; exit "${ret}"' ERR
 
 KEYRING="/etc/apt/keyrings/xanmod-archive-keyring.gpg"
 LISTFILE="/etc/apt/sources.list.d/xanmod-release.list"
 LOGFILE="/var/log/xanmod-lts-install.log"
+REPO_URL="http://deb.xanmod.org"
 
 log() {
   echo "[$(date '+%F %T')] $*"
@@ -46,10 +47,10 @@ setup_repo() {
   chmod 0644 "$KEYRING"
 
   log "写入 XanMod APT 源..."
-  echo "deb [signed-by=${KEYRING}] http://deb.xanmod.org ${codename} main" > "$LISTFILE"
+  echo "deb [signed-by=${KEYRING}] ${REPO_URL} ${codename} main" > "$LISTFILE"
   chmod 0644 "$LISTFILE"
 
-  log "更新 APT 索引..."
+  log "更新软件源索引..."
   apt-get update
 }
 
@@ -81,17 +82,16 @@ install_kernel() {
   local ver="$1"
   local pkg="linux-xanmod-lts-x64v${ver}"
 
-  log "检测到 CPU 架构等级: x64v${ver}（当前脚本最高安装 v3 LTS）"
-  log "准备安装/更新内核包: ${pkg}"
-
+  log "检测到 CPU 架构等级: x64v${ver}"
+  log "安装 XanMod LTS 内核包: ${pkg}"
   apt-get install -y "$pkg"
 
-  log "安装常用内核相关依赖..."
+  log "安装外部模块最小依赖..."
   apt-get install -y --no-install-recommends dkms libelf-dev clang lld llvm
 }
 
 refresh_grub() {
-  log "更新 grub..."
+  log "更新 GRUB..."
   if command -v update-grub >/dev/null 2>&1; then
     update-grub
   elif command -v grub-mkconfig >/dev/null 2>&1; then
@@ -107,9 +107,9 @@ show_result() {
   latest_xanmod="$(dpkg -l | awk '/^ii/ && /linux-image.*xanmod/ {print $2}' | tail -n1)"
 
   echo "=================================================="
-  echo "✅ 完成"
+  echo "✅ 安装完成"
   echo "当前运行内核: ${current_kernel}"
-  echo "已安装 XanMod 内核包: ${latest_xanmod:-未检测到}"
+  echo "已安装 XanMod LTS 包: ${latest_xanmod:-未检测到}"
   echo "日志文件: ${LOGFILE}"
   echo "⚠️ 请手动执行 reboot 重启后生效"
   echo "=================================================="
@@ -119,8 +119,8 @@ main() {
   exec > >(tee -a "$LOGFILE") 2>&1
 
   echo "=================================================="
-  echo "XanMod LTS 安装/更新脚本启动时间: $(date '+%F %T')"
-  echo "日志文件: $LOGFILE"
+  echo "XanMod LTS 一键安装启动时间: $(date '+%F %T')"
+  echo "日志文件: ${LOGFILE}"
   echo "=================================================="
 
   require_root
