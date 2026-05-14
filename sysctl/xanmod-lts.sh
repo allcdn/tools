@@ -6,7 +6,7 @@ trap 'ret=$?; echo "❌ 脚本失败，行号: ${LINENO}，退出码: ${ret}"; e
 KEYRING="/etc/apt/keyrings/xanmod-archive-keyring.gpg"
 LISTFILE="/etc/apt/sources.list.d/xanmod-release.list"
 LOGFILE="/var/log/xanmod-lts-install.log"
-REPO_URL="https://deb.xanmod.org"  # ✅ 改为 HTTPS
+REPO_URL="http://deb.xanmod.org" 
 
 log() {
   echo "[$(date '+%F %T')] $*" | tee -a "$LOGFILE"
