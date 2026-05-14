@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-trap 'ret=$?; echo "❌ 脚本执行失败，出错行号: ${LINENO}，退出码: ${ret}"; exit "${ret}"' ERR
+trap 'RET=$?; echo "❌ 脚本执行失败，出错行号: ${LINENO}，退出码: ${RET}"; exit "${RET}"' ERR
 
 KEYRING="/etc/apt/keyrings/xanmod-archive-keyring.gpg"
 LISTFILE="/etc/apt/sources.list.d/xanmod-release.list"
 LOGFILE="/var/log/xanmod-lts-install.log"
-REPO_URL="http://deb.xanmod.org"
 
 log() {
   echo "[$(date '+%F %T')] $*"
@@ -14,8 +13,8 @@ log() {
 
 require_root() {
   if [ "${EUID:-$(id -u)}" -ne 0 ]; then
-    echo "❌ 请使用 root 运行此脚本"
-    echo "用法：sudo bash $0"
+    echo "❌ 请使用 root 执行"
+    echo "用法: sudo bash $0"
     exit 1
   fi
 }
@@ -24,16 +23,7 @@ check_arch() {
   local arch
   arch="$(dpkg --print-architecture)"
   log "系统架构: ${arch}"
-  [ "$arch" = "amd64" ] || { echo "❌ 当前脚本仅支持 amd64/x86_64"; exit 1; }
-}
-
-check_apt_lock() {
-  if fuser /var/lib/dpkg/lock >/dev/null 2>&1 || \
-     fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
-     fuser /var/cache/apt/archives/lock >/dev/null 2>&1; then
-    echo "❌ 检测到 APT / DPKG 正被其他进程占用，请稍后再试"
-    exit 1
-  fi
+  [ "$arch" = "amd64" ] || { echo "❌ 当前仅支持 amd64/x86_64"; exit 1; }
 }
 
 install_prereqs() {
@@ -48,25 +38,24 @@ install_prereqs() {
     apt-transport-https
 }
 
-setup_keyring() {
-  log "创建 APT keyrings 目录..."
+setup_repo() {
+  local codename
+  codename="$(lsb_release -sc)"
+
+  log "系统版本代号: ${codename}"
+  log "创建 keyrings 目录..."
   install -d -m 0755 /etc/apt/keyrings
 
   log "导入 XanMod 仓库密钥..."
-  wget -qO- https://dl.xanmod.org/archive.key | gpg --dearmor > "$KEYRING"
+  wget -qO- https://dl.xanmod.org/archive.key | gpg --dearmor --yes -o "$KEYRING"
   chmod 0644 "$KEYRING"
-}
 
-setup_repo() {
-  local codename repo_line
-  codename="$(lsb_release -sc)"
-  repo_line="deb [signed-by=${KEYRING}] ${REPO_URL} ${codename} main"
-
-  log "系统版本代号: ${codename}"
-  log "写入 XanMod 软件源..."
-
-  printf '%s\n' "$repo_line" > "$LISTFILE"
+  log "写入 XanMod APT 源..."
+  echo "deb [signed-by=${KEYRING}] http://deb.xanmod.org ${codename} main" > "$LISTFILE"
   chmod 0644 "$LISTFILE"
+
+  log "更新 APT 索引..."
+  apt-get update
 }
 
 detect_cpu_level() {
@@ -97,10 +86,9 @@ install_kernel() {
   local ver="$1"
   local pkg="linux-xanmod-lts-x64v${ver}"
 
-  log "更新 APT 索引..."
-  apt-get update
-
+  log "检测到 CPU 架构等级: x64v${ver}（当前脚本最高安装 v3 LTS）"
   log "准备安装/更新内核包: ${pkg}"
+
   apt-get install -y "$pkg"
 
   log "安装常用内核相关依赖..."
@@ -123,13 +111,12 @@ show_result() {
   current_kernel="$(uname -r)"
   latest_xanmod="$(dpkg -l | awk '/^ii/ && /linux-image.*xanmod/ {print $2}' | tail -n1)"
 
-  echo
   echo "=================================================="
-  echo "✅ 执行完成"
+  echo "✅ 完成"
   echo "当前运行内核: ${current_kernel}"
   echo "已安装 XanMod 内核包: ${latest_xanmod:-未检测到}"
   echo "日志文件: ${LOGFILE}"
-  echo "⚠️ 需要手动执行 reboot 后新内核才会生效"
+  echo "⚠️ 请手动执行 reboot 重启后生效"
   echo "=================================================="
 }
 
@@ -142,15 +129,11 @@ main() {
   echo "=================================================="
 
   require_root
-  check_apt_lock
   check_arch
   install_prereqs
-  setup_keyring
   setup_repo
 
   CPU_VER="$(detect_cpu_level)"
-  log "检测到 CPU 架构等级: x64v${CPU_VER}（当前脚本最高安装 v3 LTS）"
-
   install_kernel "$CPU_VER"
   refresh_grub
   show_result
